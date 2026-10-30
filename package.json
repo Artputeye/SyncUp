@@ -1,0 +1,1 @@
+{"name":"syncup","version":"0.1.0","private":true,"packageManager":"pnpm@10.18.3","scripts":{"dev":"turbo dev","build":"turbo build","lint":"turbo lint","typecheck":"turbo typecheck","test":"turbo test","format":"prettier --write .","format:check":"prettier --check ."},"devDependencies":{"prettier":"^3.6.2","turbo":"^2.5.8","typescript":"^5.9.2"}}
