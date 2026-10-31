@@ -16,6 +16,9 @@ export class WorkspaceDatabaseRegistry implements OnModuleDestroy {
     if (!membership) throw new ForbiddenException("No active membership for this workspace");
     const database = membership.workspace.database;
     if (!database) throw new NotFoundException("Workspace database is not provisioned");
+    if (!/^syncup_ws_[a-f0-9]{12}$/.test(database.databaseName)) {
+      throw new NotFoundException("Workspace database identifier is invalid");
+    }
 
     const cached = this.clients.get(workspaceId);
     if (cached) return cached;

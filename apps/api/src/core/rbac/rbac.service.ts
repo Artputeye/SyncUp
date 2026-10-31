@@ -13,6 +13,7 @@ export class RbacService {
     if (!membership) return false;
     if (membership.isOwner) return true;
     return membership.roles.some(({ role }) =>
+      (role.workspaceId === null || role.workspaceId === workspaceId) &&
       role.permissions.some(({ permission }) => permission.key === permissionKey)
     );
   }
