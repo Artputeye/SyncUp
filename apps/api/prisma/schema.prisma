@@ -25,6 +25,7 @@ model User {
   passwordHash   String       @map("password_hash")
   displayName    String       @map("display_name") @db.VarChar(160)
   status         UserStatus   @default(ACTIVE)
+  isPlatformAdmin Boolean     @default(false) @map("is_platform_admin")
   memberships    Membership[]
   sessions       Session[]
   createdAt      DateTime     @default(now()) @map("created_at")

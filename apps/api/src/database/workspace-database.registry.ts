@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, OnModuleDestroy, NotFoundException } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { PrismaService } from "./prisma.service";
+import { decryptWorkspaceCredential } from "./workspace-credential.crypto";
 
 @Injectable()
 export class WorkspaceDatabaseRegistry implements OnModuleDestroy {
@@ -16,17 +17,22 @@ export class WorkspaceDatabaseRegistry implements OnModuleDestroy {
     if (!membership) throw new ForbiddenException("No active membership for this workspace");
     const database = membership.workspace.database;
     if (!database) throw new NotFoundException("Workspace database is not provisioned");
-    if (!/^syncup_ws_[a-f0-9]{12}$/.test(database.databaseName)) {
-      throw new NotFoundException("Workspace database identifier is invalid");
+    if (!/^syncup_ws_[a-f0-9]{12}$/.test(database.databaseName) || !/^syncup_rt_[a-f0-9]{12}$/.test(database.username)) {
+      throw new NotFoundException("Workspace database identity is invalid");
     }
 
     const cached = this.clients.get(workspaceId);
     if (cached) return cached;
+    if (!database.secretCipher) throw new NotFoundException("Workspace database credential is unavailable");
 
-    const runtimeUrl = process.env.WORKSPACE_DATABASE_RUNTIME_URL;
-    if (!runtimeUrl) throw new Error("WORKSPACE_DATABASE_RUNTIME_URL is not configured");
-    const url = new URL(runtimeUrl);
+    const password = decryptWorkspaceCredential(database.secretCipher);
+    const url = new URL("postgresql://localhost");
+    url.hostname = database.host;
+    url.port = String(database.port);
+    url.username = database.username;
+    url.password = password;
     url.pathname = "/" + database.databaseName;
+    url.searchParams.set("schema", "public");
     const client = new PrismaClient({ datasources: { db: { url: url.toString() } } });
     await client.$connect();
     this.clients.set(workspaceId, client);

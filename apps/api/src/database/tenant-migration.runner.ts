@@ -3,11 +3,15 @@ import { Client } from "pg";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+function quoteIdentifier(value: string): string {
+  return '"' + value.replace(/"/g, '""') + '"';
+}
+
 @Injectable()
 export class TenantMigrationRunner {
   private readonly logger = new Logger(TenantMigrationRunner.name);
 
-  async migrate(databaseName: string): Promise<string> {
+  async migrate(databaseName: string, runtimeRole: string): Promise<string> {
     const adminUrl = process.env.WORKSPACE_DATABASE_ADMIN_URL;
     if (!adminUrl) throw new Error("WORKSPACE_DATABASE_ADMIN_URL is not configured");
     const url = new URL(adminUrl);
@@ -35,19 +39,22 @@ export class TenantMigrationRunner {
           throw error;
         }
       }
-      const runtimeUrl = process.env.WORKSPACE_DATABASE_RUNTIME_URL;
-      if (!runtimeUrl) throw new Error("WORKSPACE_DATABASE_RUNTIME_URL is not configured");
-      const runtimeRole = decodeURIComponent(new URL(runtimeUrl).username);
-      if (!runtimeRole || runtimeRole.includes("\\0")) throw new Error("Runtime database role is invalid");
-      const quotedRole = '"' + runtimeRole.replace(/"/g, '""') + '"';
-      const quotedDatabase = '"' + databaseName.replace(/"/g, '""') + '"';
-      await client.query(`GRANT CONNECT ON DATABASE ${quotedDatabase} TO ${quotedRole}`);
-      await client.query(`GRANT USAGE ON SCHEMA public TO ${quotedRole}`);
-      await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${quotedRole}`);
-      await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${quotedRole}`);
-      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${quotedRole}`);
-      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${quotedRole}`);
-      this.logger.log(`Tenant database ${databaseName} migrated to ${version}`);
+      const role = quoteIdentifier(runtimeRole);
+      const database = quoteIdentifier(databaseName);
+      await client.query(`REVOKE ALL ON DATABASE ${database} FROM PUBLIC`);
+      await client.query(`REVOKE ALL ON DATABASE ${database} FROM syncup_runtime`);
+      await client.query(`GRANT CONNECT ON DATABASE ${database} TO ${role}`);
+      await client.query(`REVOKE ALL ON SCHEMA public FROM syncup_runtime`);
+      await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM syncup_runtime`);
+      await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM syncup_runtime`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM syncup_runtime`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE USAGE, SELECT ON SEQUENCES FROM syncup_runtime`);
+      await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+      await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
+      await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${role}`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${role}`);
+      this.logger.log(`Tenant database ${databaseName} migrated and restricted to ${runtimeRole}`);
       return version;
     } finally {
       try { await client.query("SELECT pg_advisory_unlock(hashtext($1))", [databaseName]); } catch {}
@@ -55,17 +62,15 @@ export class TenantMigrationRunner {
     }
   }
 
-  async healthCheck(databaseName: string): Promise<void> {
-    const runtimeUrl = process.env.WORKSPACE_DATABASE_RUNTIME_URL;
-    if (!runtimeUrl) throw new Error("WORKSPACE_DATABASE_RUNTIME_URL is not configured");
+  async healthCheck(databaseName: string, runtimeUrl: string): Promise<void> {
     const url = new URL(runtimeUrl);
     url.pathname = "/" + databaseName;
     const client = new Client({ connectionString: url.toString(), connectionTimeoutMillis: 5000 });
     await client.connect();
     try {
-      const result = await client.query("SELECT current_database() AS database_name, to_regclass('public.tenant_settings') AS tenant_settings");
-      if (result.rows[0]?.database_name !== databaseName || !result.rows[0]?.tenant_settings) {
-        throw new Error("Tenant database health check failed: baseline table is unavailable");
+      const result = await client.query("SELECT current_database() AS database_name, current_user AS role_name, to_regclass('public.tenant_settings') AS tenant_settings");
+      if (result.rows[0]?.database_name !== databaseName || result.rows[0]?.role_name !== url.username || !result.rows[0]?.tenant_settings) {
+        throw new Error("Tenant database health check failed: isolated runtime role or baseline table is unavailable");
       }
     } finally {
       await client.end();

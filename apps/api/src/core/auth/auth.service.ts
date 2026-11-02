@@ -8,7 +8,8 @@ export class AuthService {
   constructor(private readonly db: PrismaService) {}
 
   async createSession(email: string, password: string, metadata?: { userAgent?: string; ipAddress?: string }) {
-    const user = await this.db.user.findUnique({ where: { email: email.toLowerCase() } });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.db.user.findUnique({ where: { email: normalizedEmail } });
     if (!user || user.status !== "ACTIVE" || !(await compare(password, user.passwordHash))) {
       throw new UnauthorizedException("Invalid email or password");
     }
@@ -28,7 +29,7 @@ export class AuthService {
     if (!session || session.revokedAt || session.expiresAt <= new Date() || session.user.status !== "ACTIVE") {
       throw new UnauthorizedException("Session is invalid or expired");
     }
-    return { sessionId: session.id, userId: session.userId, email: session.user.email };
+    return { sessionId: session.id, userId: session.userId, email: session.user.email, isPlatformAdmin: session.user.isPlatformAdmin };
   }
 
   async revokeSession(token: string) {

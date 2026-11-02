@@ -35,7 +35,7 @@ export class AuthController {
 
   @Get("me")
   @UseGuards(AuthGuard)
-  me(@Req() request: Request & { user: { userId: string; email: string } }) {
+  me(@Req() request: Request & { user: { userId: string; email: string; isPlatformAdmin: boolean } }) {
     return { user: request.user };
   }
 }

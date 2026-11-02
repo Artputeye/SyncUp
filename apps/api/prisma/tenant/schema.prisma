@@ -1,0 +1,829 @@
+// SyncUp Tenant Database — Commerce Core schema draft.
+// This schema is intentionally separate from the Control DB schema.
+// Do not create/apply migrations until ERD, constraints, and migration strategy are reviewed.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../generated/tenant-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TENANT_DATABASE_URL")
+}
+
+enum RecordStatus {
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum StoreType {
+  PHYSICAL
+  ONLINE
+  OMNICHANNEL
+}
+
+enum StorePublishStatus {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum UomUsage {
+  BASE
+  SELL
+  PURCHASE
+  SELL_AND_PURCHASE
+}
+
+enum MediaStatus {
+  STAGED
+  READY
+  REJECTED
+  DELETED
+}
+
+enum MediaPurpose {
+  PRODUCT
+  VARIANT
+  STORE_LOGO
+  OTHER
+}
+
+enum MediaDerivativeKind {
+  ORIGINAL
+  MAIN
+  THUMBNAIL
+}
+
+enum MediaDerivativeStatus {
+  STAGED
+  PROCESSING
+  READY
+  FAILED
+}
+enum ImportStatus {
+  UPLOADED
+  VALIDATING
+  PREVIEW_READY
+  COMMITTING
+  COMMITTED
+  FAILED
+  CANCELLED
+  STALE
+}
+
+enum ImportRowStatus {
+  PENDING
+  VALID
+  INVALID
+  APPLIED
+  SKIPPED
+  FAILED
+}
+
+enum StockMovementType {
+  OPENING
+  RECEIVING
+  SALE
+  SALE_RETURN
+  RESERVATION
+  RESERVATION_RELEASE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  TRANSFER_IN
+  TRANSFER_OUT
+  REVERSAL
+  WRITE_OFF
+}
+
+enum StockReferenceType {
+  OPENING_STOCK
+  DIRECT_RECEIVING
+  ORDER
+  RETURN
+  ADJUSTMENT
+  TRANSFER
+  RESERVATION
+  MANUAL
+}
+
+enum StockAdjustmentStatus {
+  DRAFT
+  PREVIEWED
+  POSTED
+  CANCELLED
+  REVERSED
+}
+
+enum OpeningStockStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+enum ReceivingStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+  REVERSED
+}
+
+enum CategoryStatus {
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum TaxMode {
+  VAT
+  NO_VAT
+}
+
+enum PriceTaxMode {
+  INCLUSIVE
+  EXCLUSIVE
+}
+
+enum TaxRoundingLevel {
+  DOCUMENT
+}
+
+enum TaxRoundingMethod {
+  HALF_UP
+}
+
+model Store {
+  id            String          @id @default(uuid()) @db.Uuid
+  name          String          @db.VarChar(160)
+  slug          String          @unique @db.VarChar(80)
+  storeType     StoreType       @default(OMNICHANNEL) @map("store_type")
+  status        RecordStatus    @default(ACTIVE)
+  description   String?         @db.Text
+  logoMediaId   String?         @map("logo_media_id") @db.Uuid
+  contactEmail  String?         @map("contact_email") @db.VarChar(320)
+  contactPhone  String?         @map("contact_phone") @db.VarChar(40)
+  address       Json?
+  currency      String          @default("THB") @db.Char(3)
+  timezone      String          @default("Asia/Bangkok") @db.VarChar(64)
+  isPublished   Boolean         @default(false) @map("is_published")
+  branches      Branch[]        @relation("StoreBranches")
+  categories    StoreCategory[]
+  storeProducts StoreProduct[]
+  taxProfiles   TaxProfile[]
+  auditLogs     AuditLog[]
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@index([status, isPublished])
+  @@map("stores")
+}
+
+model Branch {
+  id         String       @id @default(uuid()) @db.Uuid
+  storeId    String       @map("store_id") @db.Uuid
+  code       String       @db.VarChar(40)
+  name       String       @db.VarChar(160)
+  status     RecordStatus @default(ACTIVE)
+  isDefault  Boolean      @default(false) @map("is_default")
+  address    Json?
+  phone      String?      @db.VarChar(40)
+  store      Store        @relation("StoreBranches", fields: [storeId], references: [id], onDelete: Restrict)
+  warehouses Warehouse[]
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  @@unique([storeId, code])
+  @@unique([storeId, id])
+  @@index([storeId, status])
+  @@map("branches")
+}
+
+model Warehouse {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  branchId           String                       @map("branch_id") @db.Uuid
+  code               String                       @db.VarChar(40)
+  name               String                       @db.VarChar(160)
+  status             RecordStatus                 @default(ACTIVE)
+  isDefault          Boolean                      @default(false) @map("is_default")
+  branch             Branch                       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  balances           StockBalance[]
+  movements          StockMovement[]
+  reservations       StockReservation[]
+  costs              InventoryCost[]
+  openingSessions    OpeningStockSession[]
+  receivingDocuments DirectReceiving[]
+  adjustmentBatches  StockAdjustmentImportBatch[]
+  createdAt          DateTime                     @default(now()) @map("created_at")
+  updatedAt          DateTime                     @updatedAt @map("updated_at")
+
+  @@unique([branchId, code])
+  @@unique([branchId, id])
+  @@index([branchId, status])
+  @@map("warehouses")
+}
+
+model UnitOfMeasure {
+  id             String           @id @default(uuid()) @db.Uuid
+  code           String           @unique @db.VarChar(32)
+  normalizedCode String           @unique @map("normalized_code") @db.VarChar(32)
+  name           String           @db.VarChar(80)
+  symbol         String           @db.VarChar(24)
+  dimension      String           @db.VarChar(40)
+  decimalPlaces  Int              @default(0) @map("decimal_places")
+  status         RecordStatus     @default(ACTIVE)
+  isSystem       Boolean          @default(false) @map("is_system")
+  baseVariants   ProductVariant[] @relation("VariantBaseUom")
+  variantUoms    VariantUom[]
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  @@index([dimension, status])
+  @@map("unit_of_measures")
+}
+
+model Product {
+  id             String           @id @default(uuid()) @db.Uuid
+  name           String           @db.VarChar(200)
+  description    String?          @db.Text
+  status         ProductStatus    @default(DRAFT)
+  normalizedName String           @map("normalized_name") @db.VarChar(200)
+  variants       ProductVariant[]
+  storeProducts  StoreProduct[]
+  images         ProductImage[]
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  archivedAt     DateTime?        @map("archived_at")
+
+  @@index([status, name])
+  @@index([normalizedName])
+  @@map("products")
+}
+
+model ProductVariant {
+  id             String                     @id @default(uuid()) @db.Uuid
+  productId      String                     @map("product_id") @db.Uuid
+  baseUomId      String                     @map("base_uom_id") @db.Uuid
+  sku            String                     @db.VarChar(100)
+  normalizedSku  String                     @unique @map("normalized_sku") @db.VarChar(100)
+  title          String                     @db.VarChar(160)
+  barcode        String?                    @db.VarChar(128)
+  status         ProductStatus              @default(DRAFT)
+  attributes     Json?
+  product        Product                    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  baseUom        UnitOfMeasure              @relation("VariantBaseUom", fields: [baseUomId], references: [id], onDelete: Restrict)
+  variantUoms    VariantUom[]
+  barcodes       VariantBarcode[]
+  storeVariants  StoreProductVariant[]
+  images         VariantImage[]
+  balances       StockBalance[]
+  movements      StockMovement[]
+  reservations   StockReservation[]
+  costs          InventoryCost[]
+  openingItems   OpeningStockItem[]
+  receivingItems DirectReceivingItem[]
+  adjustmentRows StockAdjustmentImportRow[]
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+  archivedAt     DateTime?                  @map("archived_at")
+
+  @@unique([productId, id])
+  @@index([productId, status])
+  @@index([sku])
+  @@map("product_variants")
+}
+
+model VariantUom {
+  id               String         @id @default(uuid()) @db.Uuid
+  variantId        String         @map("variant_id") @db.Uuid
+  uomId            String         @map("uom_id") @db.Uuid
+  usage            UomUsage
+  conversionToBase Decimal        @default(1) @map("conversion_to_base") @db.Decimal(20, 9)
+  status           RecordStatus   @default(ACTIVE)
+  variant          ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  uom              UnitOfMeasure  @relation(fields: [uomId], references: [id], onDelete: Restrict)
+  prices           ProductPrice[]
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  @@unique([variantId, uomId])
+  @@unique([variantId, id])
+  @@index([uomId, status])
+  @@map("variant_uoms")
+}
+
+model VariantBarcode {
+  id         String         @id @default(uuid()) @db.Uuid
+  variantId  String         @map("variant_id") @db.Uuid
+  barcode    String         @db.VarChar(128)
+  normalized String         @unique @db.VarChar(128)
+  symbology  String         @default("EAN13") @db.VarChar(24)
+  variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  @@index([variantId])
+  @@map("variant_barcodes")
+}
+
+model StoreProduct {
+  id            String                 @id @default(uuid()) @db.Uuid
+  storeId       String                 @map("store_id") @db.Uuid
+  productId     String                 @map("product_id") @db.Uuid
+  publishStatus StorePublishStatus     @default(DRAFT) @map("publish_status")
+  sortOrder     Int                    @default(0) @map("sort_order")
+  featured      Boolean                @default(false)
+  store         Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product       Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
+  categories    StoreProductCategory[]
+  variants      StoreProductVariant[]
+  createdAt     DateTime               @default(now()) @map("created_at")
+  updatedAt     DateTime               @updatedAt @map("updated_at")
+  archivedAt    DateTime?              @map("archived_at")
+
+  @@unique([storeId, productId])
+  @@unique([storeId, id])
+  @@unique([storeId, id, productId])
+  @@index([storeId, publishStatus, sortOrder])
+  @@map("store_products")
+}
+
+model StoreProductVariant {
+  id             String             @id @default(uuid()) @db.Uuid
+  storeId        String             @map("store_id") @db.Uuid
+  productId      String             @map("product_id") @db.Uuid
+  storeProductId String             @map("store_product_id") @db.Uuid
+  variantId      String             @map("variant_id") @db.Uuid
+  publishStatus  StorePublishStatus @default(DRAFT) @map("publish_status")
+  sortOrder      Int                @default(0) @map("sort_order")
+  storeProduct   StoreProduct       @relation(fields: [storeId, storeProductId, productId], references: [storeId, id, productId], onDelete: Restrict)
+  variant        ProductVariant     @relation(fields: [productId, variantId], references: [productId, id], onDelete: Restrict)
+  prices         ProductPrice[]
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  @@unique([storeProductId, variantId])
+  @@unique([storeProductId, id])
+  @@unique([id, variantId])
+  @@index([storeProductId, publishStatus, sortOrder])
+  @@map("store_product_variants")
+}
+
+model StoreCategory {
+  id             String                 @id @default(uuid()) @db.Uuid
+  storeId        String                 @map("store_id") @db.Uuid
+  parentId       String?                @map("parent_id") @db.Uuid
+  name           String                 @db.VarChar(120)
+  slug           String                 @db.VarChar(120)
+  normalizedSlug String                 @map("normalized_slug") @db.VarChar(120)
+  description    String?                @db.Text
+  status         CategoryStatus         @default(ACTIVE)
+  sortOrder      Int                    @default(0) @map("sort_order")
+  store          Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  parent         StoreCategory?         @relation("CategoryTree", fields: [storeId, parentId], references: [storeId, id], onDelete: Restrict)
+  children       StoreCategory[]        @relation("CategoryTree")
+  products       StoreProductCategory[]
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  @@unique([storeId, normalizedSlug])
+  @@unique([storeId, id])
+  @@index([storeId, parentId, sortOrder])
+  @@map("store_categories")
+}
+
+model StoreProductCategory {
+  storeId        String        @map("store_id") @db.Uuid
+  storeProductId String        @map("store_product_id") @db.Uuid
+  categoryId     String        @map("category_id") @db.Uuid
+  storeProduct   StoreProduct  @relation(fields: [storeId, storeProductId], references: [storeId, id], onDelete: Restrict)
+  category       StoreCategory @relation(fields: [storeId, categoryId], references: [storeId, id], onDelete: Restrict)
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  @@id([storeId, storeProductId, categoryId])
+  @@index([storeId, categoryId])
+  @@map("store_product_categories")
+}
+
+model ProductPrice {
+  id                    String              @id @default(uuid()) @db.Uuid
+  storeProductVariantId String              @map("store_product_variant_id") @db.Uuid
+  variantId             String              @map("variant_id") @db.Uuid
+  variantUomId          String              @map("variant_uom_id") @db.Uuid
+  amount                Decimal             @db.Decimal(20, 4)
+  currency              String              @default("THB") @db.Char(3)
+  validFrom             DateTime            @default(now()) @map("valid_from")
+  validTo               DateTime?           @map("valid_to")
+  storeProductVariant   StoreProductVariant @relation(fields: [storeProductVariantId, variantId], references: [id, variantId], onDelete: Restrict)
+  variantUom            VariantUom          @relation(fields: [variantId, variantUomId], references: [variantId, id], onDelete: Restrict)
+  createdAt             DateTime            @default(now()) @map("created_at")
+  createdBy              String?             @map("created_by") @db.Uuid
+
+  @@index([storeProductVariantId, variantUomId, currency, validFrom])
+  @@map("product_prices")
+}
+
+model MediaAsset {
+  id               String                    @id @default(uuid()) @db.Uuid
+  purpose          MediaPurpose
+  status           MediaStatus               @default(STAGED)
+  altText          String?                   @map("alt_text") @db.VarChar(255)
+  uploadedBy       String?                   @map("uploaded_by") @db.Uuid
+  verifiedAt       DateTime?                 @map("verified_at")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+  derivatives      MediaAssetDerivative[]
+  productImages    ProductImage[]
+  variantImages    VariantImage[]
+  imageImportItems ImageImportItem[]
+
+  @@index([status, createdAt])
+  @@map("media_assets")
+}
+
+model MediaAssetDerivative {
+  id               String                @id @default(uuid()) @db.Uuid
+  mediaAssetId     String                @map("media_asset_id") @db.Uuid
+  kind             MediaDerivativeKind
+  status           MediaDerivativeStatus @default(STAGED)
+  storageProvider  String                @default("s3-compatible") @map("storage_provider") @db.VarChar(40)
+  bucket           String                @db.VarChar(128)
+  objectKey        String                @unique @map("object_key") @db.VarChar(1024)
+  originalFilename String?               @map("original_filename") @db.VarChar(255)
+  mimeType         String                @map("mime_type") @db.VarChar(127)
+  extension        String?               @db.VarChar(16)
+  sizeBytes        BigInt                @map("size_bytes")
+  checksumSha256   String                @map("checksum_sha256") @db.Char(64)
+  width            Int
+  height           Int
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  mediaAsset       MediaAsset            @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+
+  @@unique([mediaAssetId, kind])
+  @@index([status, createdAt])
+  @@map("media_asset_derivatives")
+}
+model ProductImage {
+  id           String     @id @default(uuid()) @db.Uuid
+  productId    String     @map("product_id") @db.Uuid
+  mediaAssetId String     @map("media_asset_id") @db.Uuid
+  isPrimary    Boolean    @default(false) @map("is_primary")
+  sortOrder    Int        @default(0) @map("sort_order")
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  mediaAsset   MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@unique([productId, mediaAssetId])
+  @@index([productId, sortOrder])
+  @@map("product_images")
+}
+
+model VariantImage {
+  id           String         @id @default(uuid()) @db.Uuid
+  variantId    String         @map("variant_id") @db.Uuid
+  mediaAssetId String         @map("media_asset_id") @db.Uuid
+  isPrimary    Boolean        @default(false) @map("is_primary")
+  sortOrder    Int            @default(0) @map("sort_order")
+  variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  mediaAsset   MediaAsset     @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  @@unique([variantId, mediaAssetId])
+  @@index([variantId, sortOrder])
+  @@map("variant_images")
+}
+
+model ImageImportBatch {
+  id               String            @id @default(uuid()) @db.Uuid
+  status           ImportStatus      @default(UPLOADED)
+  sourceFilename   String            @map("source_filename") @db.VarChar(255)
+  sourceChecksum   String            @map("source_checksum") @db.Char(64)
+  manifestChecksum String?           @map("manifest_checksum") @db.Char(64)
+  stagingObjectKey String?           @map("staging_object_key") @db.VarChar(1024)
+  totalFiles       Int               @default(0) @map("total_files")
+  processedFiles   Int               @default(0) @map("processed_files")
+  validFiles       Int               @default(0) @map("valid_files")
+  invalidFiles     Int               @default(0) @map("invalid_files")
+  options          Json?
+  errorSummary     Json?             @map("error_summary")
+  uploadedBy       String            @map("uploaded_by") @db.Uuid
+  startedAt        DateTime?         @map("started_at")
+  completedAt      DateTime?         @map("completed_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  items            ImageImportItem[]
+
+  @@index([status, createdAt])
+  @@index([uploadedBy, createdAt])
+  @@map("image_import_batches")
+}
+
+model ImageImportItem {
+  id               String           @id @default(uuid()) @db.Uuid
+  batchId          String           @map("batch_id") @db.Uuid
+  mediaAssetId     String?          @map("media_asset_id") @db.Uuid
+  relativePath     String           @map("relative_path") @db.VarChar(1024)
+  originalFilename String           @map("original_filename") @db.VarChar(255)
+  checksumSha256   String?          @map("checksum_sha256") @db.Char(64)
+  targetType       String?          @map("target_type") @db.VarChar(24)
+  targetId         String?          @map("target_id") @db.Uuid
+  mappingKey       String?          @map("mapping_key") @db.VarChar(160)
+  imageRole        String?          @map("image_role") @db.VarChar(24)
+  sortOrder        Int              @default(0) @map("sort_order")
+  status           ImportRowStatus  @default(PENDING)
+  errorCode        String?          @map("error_code") @db.VarChar(80)
+  errorMessage     String?          @map("error_message") @db.VarChar(1000)
+  metadata         Json?
+  batch            ImageImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  mediaAsset       MediaAsset?      @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  @@unique([batchId, relativePath])
+  @@index([batchId, status])
+  @@index([targetType, targetId])
+  @@map("image_import_items")
+}
+
+model StockBalance {
+  warehouseId String         @map("warehouse_id") @db.Uuid
+  variantId   String         @map("variant_id") @db.Uuid
+  onHand      Decimal        @default(0) @map("on_hand") @db.Decimal(20, 3)
+  reserved    Decimal        @default(0) @db.Decimal(20, 3)
+  available   Decimal        @default(0) @db.Decimal(20, 3)
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@id([warehouseId, variantId])
+  @@index([variantId, warehouseId])
+  @@map("stock_balances")
+}
+
+model StockMovement {
+  id             String             @id @default(uuid()) @db.Uuid
+  warehouseId    String             @map("warehouse_id") @db.Uuid
+  variantId      String             @map("variant_id") @db.Uuid
+  movementType   StockMovementType  @map("movement_type")
+  quantityDelta  Decimal            @map("quantity_delta") @db.Decimal(20, 3)
+  unitCost       Decimal?           @map("unit_cost") @db.Decimal(20, 6)
+  totalCost      Decimal?           @map("total_cost") @db.Decimal(24, 6)
+  referenceType  StockReferenceType @map("reference_type")
+  referenceId    String?            @map("reference_id") @db.Uuid
+  idempotencyKey String?            @unique @map("idempotency_key") @db.VarChar(160)
+  reversalOfId   String?            @unique @map("reversal_of_id") @db.Uuid
+  reason         String?            @db.VarChar(500)
+  actorUserId    String?            @map("actor_user_id") @db.Uuid
+  occurredAt     DateTime           @default(now()) @map("occurred_at")
+  metadata       Json?
+  warehouse      Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  variant        ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  reversalOf     StockMovement?     @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals      StockMovement[]    @relation("MovementReversal")
+  createdAt      DateTime           @default(now()) @map("created_at")
+
+  @@index([warehouseId, variantId, occurredAt])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+model StockReservation {
+  id             String         @id @default(uuid()) @db.Uuid
+  warehouseId    String         @map("warehouse_id") @db.Uuid
+  variantId      String         @map("variant_id") @db.Uuid
+  quantity       Decimal        @db.Decimal(20, 3)
+  status         String         @default("ACTIVE") @db.VarChar(24)
+  referenceType  String         @map("reference_type") @db.VarChar(40)
+  referenceId    String?        @map("reference_id") @db.Uuid
+  idempotencyKey String?        @unique @map("idempotency_key") @db.VarChar(160)
+  expiresAt      DateTime?      @map("expires_at")
+  releasedAt     DateTime?      @map("released_at")
+  actorUserId    String?        @map("actor_user_id") @db.Uuid
+  warehouse      Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  @@index([warehouseId, variantId, status])
+  @@index([status, expiresAt])
+  @@map("stock_reservations")
+}
+
+model InventoryCost {
+  warehouseId     String         @map("warehouse_id") @db.Uuid
+  variantId       String         @map("variant_id") @db.Uuid
+  quantity        Decimal        @default(0) @db.Decimal(20, 3)
+  averageUnitCost Decimal        @default(0) @map("average_unit_cost") @db.Decimal(20, 6)
+  inventoryValue  Decimal        @default(0) @map("inventory_value") @db.Decimal(24, 6)
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  warehouse       Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  variant         ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@id([warehouseId, variantId])
+  @@map("inventory_costs")
+}
+
+model OpeningStockSession {
+  id                String             @id @default(uuid()) @db.Uuid
+  warehouseId       String             @map("warehouse_id") @db.Uuid
+  postedWarehouseId String?            @unique @map("posted_warehouse_id") @db.Uuid
+  status            OpeningStockStatus @default(DRAFT)
+  reference         String?            @db.VarChar(100)
+  notes             String?            @db.VarChar(1000)
+  idempotencyKey    String?            @unique @map("idempotency_key") @db.VarChar(160)
+  createdBy         String             @map("created_by") @db.Uuid
+  postedBy          String?            @map("posted_by") @db.Uuid
+  postedAt          DateTime?          @map("posted_at")
+  warehouse         Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  items             OpeningStockItem[]
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  @@index([warehouseId, status])
+  @@map("opening_stock_sessions")
+}
+
+model OpeningStockItem {
+  id        String              @id @default(uuid()) @db.Uuid
+  sessionId String              @map("session_id") @db.Uuid
+  variantId String              @map("variant_id") @db.Uuid
+  quantity  Decimal             @db.Decimal(20, 3)
+  unitCost  Decimal             @map("unit_cost") @db.Decimal(20, 6)
+  totalCost Decimal             @map("total_cost") @db.Decimal(24, 6)
+  session   OpeningStockSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  variant   ProductVariant      @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  @@unique([sessionId, variantId])
+  @@index([variantId])
+  @@map("opening_stock_items")
+}
+
+model DirectReceiving {
+  id                String                @id @default(uuid()) @db.Uuid
+  warehouseId       String                @map("warehouse_id") @db.Uuid
+  status            ReceivingStatus       @default(DRAFT)
+  documentNumber    String?               @map("document_number") @db.VarChar(100)
+  supplierReference String?               @map("supplier_reference") @db.VarChar(160)
+  receivedAt        DateTime              @default(now()) @map("received_at")
+  notes             String?               @db.VarChar(1000)
+  idempotencyKey    String?               @unique @map("idempotency_key") @db.VarChar(160)
+  createdBy         String                @map("created_by") @db.Uuid
+  postedBy          String?               @map("posted_by") @db.Uuid
+  postedAt          DateTime?             @map("posted_at")
+  warehouse         Warehouse             @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  items             DirectReceivingItem[]
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  @@index([warehouseId, status, receivedAt])
+  @@map("direct_receivings")
+}
+
+model DirectReceivingItem {
+  id          String          @id @default(uuid()) @db.Uuid
+  receivingId String          @map("receiving_id") @db.Uuid
+  variantId   String          @map("variant_id") @db.Uuid
+  quantity    Decimal         @db.Decimal(20, 3)
+  unitCost    Decimal         @map("unit_cost") @db.Decimal(20, 6)
+  totalCost   Decimal         @map("total_cost") @db.Decimal(24, 6)
+  receiving   DirectReceiving @relation(fields: [receivingId], references: [id], onDelete: Restrict)
+  variant     ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@unique([receivingId, variantId])
+  @@index([variantId])
+  @@map("direct_receiving_items")
+}
+
+model StockAdjustmentImportBatch {
+  id               String                     @id @default(uuid()) @db.Uuid
+  warehouseId      String                     @map("warehouse_id") @db.Uuid
+  status           ImportStatus               @default(UPLOADED)
+  sourceFilename   String                     @map("source_filename") @db.VarChar(255)
+  sourceChecksum   String                     @map("source_checksum") @db.Char(64)
+  snapshotChecksum String                     @map("snapshot_checksum") @db.Char(64)
+  snapshotTakenAt  DateTime                   @map("snapshot_taken_at")
+  templateVersion  String                     @map("template_version") @db.VarChar(32)
+  rowCount         Int                        @default(0) @map("row_count")
+  validRowCount    Int                        @default(0) @map("valid_row_count")
+  invalidRowCount  Int                        @default(0) @map("invalid_row_count")
+  appliedRowCount  Int                        @default(0) @map("applied_row_count")
+  idempotencyKey   String?                    @unique @map("idempotency_key") @db.VarChar(160)
+  stagingObjectKey String?                    @map("staging_object_key") @db.VarChar(1024)
+  statusMessage    String?                    @map("status_message") @db.VarChar(1000)
+  uploadedBy       String                     @map("uploaded_by") @db.Uuid
+  committedBy      String?                    @map("committed_by") @db.Uuid
+  committedAt      DateTime?                  @map("committed_at")
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  updatedAt        DateTime                   @updatedAt @map("updated_at")
+  warehouse        Warehouse                  @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  rows             StockAdjustmentImportRow[]
+
+  @@index([warehouseId, status, createdAt])
+  @@index([uploadedBy, createdAt])
+  @@map("stock_adjustment_import_batches")
+}
+
+model StockAdjustmentImportRow {
+  id                String                     @id @default(uuid()) @db.Uuid
+  batchId           String                     @map("batch_id") @db.Uuid
+  rowNumber         Int                        @map("row_number")
+  variantId         String?                    @map("variant_id") @db.Uuid
+  skuSnapshot       String                     @map("sku_snapshot") @db.VarChar(100)
+  expectedOnHand    Decimal?                   @map("expected_on_hand") @db.Decimal(20, 3)
+  countedQuantity   Decimal?                   @map("counted_quantity") @db.Decimal(20, 3)
+  deltaQuantity     Decimal?                   @map("delta_quantity") @db.Decimal(20, 3)
+  unitCost          Decimal?                   @map("unit_cost") @db.Decimal(20, 6)
+  status            ImportRowStatus            @default(PENDING)
+  errorCode         String?                    @map("error_code") @db.VarChar(80)
+  errorMessage      String?                    @map("error_message") @db.VarChar(1000)
+  rawData           Json?                      @map("raw_data")
+  validationResult  Json?                      @map("validation_result")
+  appliedMovementId String?                    @unique @map("applied_movement_id") @db.Uuid
+  batch             StockAdjustmentImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  variant           ProductVariant?            @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+
+  @@unique([batchId, rowNumber])
+  @@index([batchId, status])
+  @@index([variantId])
+  @@map("stock_adjustment_import_rows")
+}
+
+model TaxCategory {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique @db.VarChar(40)
+  name        String       @db.VarChar(120)
+  description String?      @db.VarChar(255)
+  status      RecordStatus @default(ACTIVE)
+  rates       TaxRate[]
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("tax_categories")
+}
+
+model TaxProfile {
+  id                 String            @id @default(uuid()) @db.Uuid
+  storeId            String            @map("store_id") @db.Uuid
+  name               String            @db.VarChar(120)
+  taxMode            TaxMode           @default(VAT) @map("tax_mode")
+  priceTaxMode       PriceTaxMode      @default(EXCLUSIVE) @map("price_tax_mode")
+  roundingLevel      TaxRoundingLevel  @default(DOCUMENT) @map("rounding_level")
+  roundingMethod     TaxRoundingMethod @default(HALF_UP) @map("rounding_method")
+  currencyMinorUnits Int               @default(2) @map("currency_minor_units")
+  validFrom          DateTime          @default(now()) @map("valid_from")
+  validTo            DateTime?         @map("valid_to")
+  store              Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  rates              TaxRate[]
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  @@index([storeId, validFrom, validTo])
+  @@map("tax_profiles")
+}
+
+model TaxRate {
+  id            String      @id @default(uuid()) @db.Uuid
+  taxProfileId  String      @map("tax_profile_id") @db.Uuid
+  taxCategoryId String      @map("tax_category_id") @db.Uuid
+  rate          Decimal     @db.Decimal(9, 6)
+  validFrom     DateTime    @default(now()) @map("valid_from")
+  validTo       DateTime?   @map("valid_to")
+  taxProfile    TaxProfile  @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
+  taxCategory   TaxCategory @relation(fields: [taxCategoryId], references: [id], onDelete: Restrict)
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([taxProfileId, taxCategoryId, validFrom])
+  @@map("tax_rates")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  storeId     String?  @map("store_id") @db.Uuid
+  store       Store?   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(120)
+  entityType  String   @map("entity_type") @db.VarChar(120)
+  entityId    String?  @map("entity_id") @db.Uuid
+  reason      String?  @db.VarChar(1000)
+  requestId   String?  @map("request_id") @db.VarChar(128)
+  before      Json?
+  after       Json?
+  metadata    Json?
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  @@index([storeId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@map("audit_logs")
+}
