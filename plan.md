@@ -526,24 +526,202 @@
 
 ### สถานะจริง ณ วันนี้
 
-- **Foundation / Auth / Workspace:** มี Control DB, Auth, Workspace Membership/RBAC, Workspace Provisioning, Tenant DB Registry และ Platform Admin endpoints/UI อยู่ในโค้ดแล้ว; มีการตรวจ Control DB จริงและพบ Workspace A/B ยัง ACTIVE
-- **Workspace A/B:** A = `workspace-a-local`, DB `syncup_ws_2a4577ace43c`; B = `workspace-b-local`, DB `syncup_ws_e4199e58d35b`. แต่ละ Workspace มี Owner 1 คน, ไม่มี Module Installation และไม่มี Workspace-specific Role ที่ถูกกำหนดเพิ่ม; Owner ทั้งสองเป็นคนละบัญชีและไม่ใช่ Platform Admin. ยังมี Active Session อย่างน้อยบัญชีละ 1 session จากการตรวจล่าสุด
+- **Foundation / Auth / Workspace:** มี Control DB, Auth, Workspace Membership/RBAC, Workspace Provisioning, Tenant DB Registry, Platform Admin endpoints/UI และ Tenant API (`GET /api/tenant/:workspaceId/settings`) อยู่ในโค้ดแล้ว; ทดสอบ HTTP Authentication, tenant isolation และ Workspace status gate ผ่าน
+- **Workspace A/B:** A = `workspace-a-local`, DB `syncup_ws_2a4577ace43c`; B = `workspace-b-local`, DB `syncup_ws_e4199e58d35b`. ทั้งสอง Workspace มี Owner คนละบัญชี และถูกเปลี่ยนสถานะเป็น `SUSPENDED` แล้ว; ตรวจยืนยันว่า Tenant DB ทั้งสองยังคงอยู่ ไม่ได้ลบหรือแก้ข้อมูลภายใน. User Session ยังคงเป็นระดับ User; การระงับสิทธิ์ทำผ่าน Workspace status gate
 - **Tenant DB:** ทั้ง A/B มีเพียง `tenant_settings`, `audit_events`, `tenant_migrations`; schema version เป็น `20261031000100_tenant_baseline`. ยังไม่มี Commerce/Product/Inventory/Media tables. Tenant baseline เดิมตรงกับ migration ที่ตรวจแล้ว
 - **Commerce Data Model:** มี Tenant Prisma Schema และเอกสาร ERD/API Contract/Approved Decisions/Review/Final Plan แล้ว; การออกแบบ Composite Constraints, Default Branch/Warehouse, Price History, Stock Ledger/Reservation, WAC, Bulk Image Upload และ Provisioning ผ่านการทบทวนเชิงออกแบบตามบันทึกการตัดสินใจ
 - **Media:** เพิ่ม `MediaAssetDerivative` และชนิด ORIGINAL/MAIN/THUMBNAIL ใน Prisma Schema แล้ว; Prisma validate ผ่านตามการตรวจล่าสุด. เป็น schema/design change ใน Repository เท่านั้น ยังไม่มี migration หรือ DB deployment
 - **Migration:** มี Tenant initial Commerce migration specification และ SQL candidates (Prisma diff + custom constraints) แต่ยังไม่ reconcile เป็น incremental migration candidate ที่ผ่านการตรวจครบ และยังไม่มี Migration Sign-off. ห้าม generate/apply migration หรือ generate Prisma Client จนกว่าจะผ่าน Sign-off
 - **Tests / Runtime:** ยังไม่มีหลักฐานว่า Commerce API, CSV Import, Bulk Image Upload, Store/Branch/Warehouse provisioning หรือ Stock/Price services ใช้งานจริงครบ; Docker Engine/DB tooling มีข้อจำกัดจากการตรวจครั้งก่อน จึงยังไม่ถือว่า Commerce runtime ผ่าน acceptance
-- **POS Workspace:** ยังไม่ได้สร้าง Workspace POS และยังไม่ได้ระงับ A/B. แนวทางที่ตกลงคือ Suspend A/B และเก็บ Tenant DB เดิมไว้; ต้องเลือก Owner ของ POS ก่อนสร้าง. Provisioning ปัจจุบันตั้งชื่อ Tenant DB อัตโนมัติเป็น `syncup_ws_<uuid suffix>` ไม่รองรับการบังคับชื่อ `syncup_pos_local` ผ่าน flow ปัจจุบัน
+- **POS Workspace:** สร้าง `pos-local` แล้ว โดย Owner A (`owner-a@syncup.local`) เป็น Owner; Workspace ACTIVE และใช้ Tenant DB ที่ Provisioning ตั้งชื่ออัตโนมัติ. Workspace A/B ถูก Suspend และเก็บ Tenant DB เดิมไว้
 
 ### งานที่กำลังทำ / ลำดับถัดไป
 
-1. [ ] เลือก Owner สำหรับ Workspace POS (Owner เดิมของ A หรือ B); ยังห้ามเดาแทนผู้ใช้
-2. [ ] ตรวจสอบ/ยืนยัน flow สำหรับสร้าง POS Workspace และ Suspend A/B ผ่าน Platform Admin/Provisioning; หลังได้ Owner จึงดำเนินการและตรวจผล
-3. [ ] ทำ Migration SQL Reconciliation: รวม Prisma-generated DDL กับ custom constraints, reconcile กับ baseline จริงของ A/B, ตรวจ extension/permissions/idempotency/order และแยก clean-install diff ออกจาก upgrade migration
-4. [ ] ทดสอบ incremental migration candidate บน disposable PostgreSQL ที่มี baseline เดียวกัน; ตรวจ preflight/postflight และ rollback/recovery plan
-5. [ ] ขอ Migration Sign-off แยกต่างหากก่อนสร้างหรือ apply migration จริง
-6. [ ] หลัง Sign-off จึงค่อย deploy Tenant Commerce schema และเริ่ม implement/test Business APIs ตาม Phase
+1. [x] เลือก Owner สำหรับ Workspace POS: Owner A (`owner-a@syncup.local`) ยืนยันแล้วเมื่อ 2026-11-03
+2. [x] สร้าง POS Workspace `pos-local` ด้วย Owner A; Provisioning และ Tenant DB Registry เชื่อมต่อฐานข้อมูลแยกด้วย Runtime Role ได้
+3. [x] ทดสอบ Tenant API ผ่าน HTTP จริง: unauthenticated=401, Owner A อ่าน Workspace A=200, cross-tenant=403, Owner B อ่าน Workspace B=200, suspended Workspace=403; ทดสอบ service-level status gate ผ่าน
+4. [x] Suspend Workspace A/B โดยเก็บ Tenant DB เดิมไว้; ตรวจสอบสถานะ `SUSPENDED` และ database existence สำเร็จ
+5. [~] ทำ Migration SQL Reconciliation: สร้าง Prisma clean-install DDL candidate และ custom constraints candidate; จัดการ TIMESTAMPTZ และเพิ่ม canonical normalized-key constraints แล้ว แต่ยังต้องปิด effective-date overlap, branch/warehouse lifecycle, inventory/posting invariants และทำ incremental upgrade candidate
+6. [ ] ทดสอบ incremental migration candidate บน disposable PostgreSQL ที่มี baseline เดียวกัน; ตรวจ preflight/postflight และ rollback/recovery plan
+7. [ ] ขอ Migration Sign-off แยกต่างหากก่อนสร้างหรือ apply migration จริง
+8. [ ] หลัง Sign-off จึงค่อย deploy Tenant Commerce schema และเริ่ม implement/test Business APIs ตาม Phase
+
+### ความคืบหน้าการดำเนินการ 2026-11-03 — Tenant API และ Suspend
+
+- Tenant API ผ่าน HTTP test: unauthenticated 401, own workspace 200, cross-tenant 403, suspended workspace 403; service-level suspension test ผ่าน
+- Workspace A/B ถูก Suspend จริง; ตรวจยืนยันทั้งสองสถานะเป็น SUSPENDED และ Tenant DB เดิมยังคงอยู่
+- POS Workspace `pos-local` ยังคง ACTIVE
+
+### ความคืบหน้าการดำเนินการ 2026-11-03 — Migration Reconciliation
+
+- `prisma validate --schema prisma/tenant/schema.prisma` ผ่านด้วย Prisma CLI 6.16.2 (ใช้ placeholder TENANT_DATABASE_URL สำหรับ validation เท่านั้น)
+- สร้าง `docs/architecture/tenant-commerce-clean-install.candidate.sql` จาก `prisma migrate diff --from-empty`; เป็น Prisma DDL candidate เท่านั้น ไม่ใช่ migration ที่ deploy ได้ และไม่รวม baseline 3 ตาราง
+- สร้าง `docs/architecture/tenant-commerce-custom-constraints.candidate.sql` เป็นข้อเสนอ partial unique indexes และ CHECK constraints; ยังไม่ได้ทดสอบกับ PostgreSQL และห้าม apply
+- สร้าง `docs/architecture/tenant-commerce-migration-reconciliation.md` สรุป input, scope gap, clean-install vs incremental strategy และ verification gate
+- แก้ Tenant Prisma DateTime ทุกฟิลด์เป็น native `@db.Timestamptz(3)` ตาม ERD แล้ว; `prisma validate` ผ่านและ regenerate clean-install candidate เรียบร้อย
+- พบ gap อื่น: default Branch/Warehouse uniqueness, minimum Warehouse per Branch, normalized keys, effective-date overlap, inventory arithmetic checks และ Order/Payment/Return เป็น ERD scope ที่ยังไม่อยู่ใน Tenant Prisma schema
+- เพิ่ม `Store.normalizedSlug` แบบ unique และเปลี่ยน uniqueness ของ Store slug จาก raw slug เป็น normalized slug; เพิ่ม CHECK candidate บังคับ normalized Store slug, Category slug, SKU, Barcode และ UOM code ให้เท่ากับ `lower(btrim(raw_value))`
+- Regenerate clean-install candidate จาก schema ล่าสุด; `prisma validate` ผ่านด้วย Prisma CLI 6.16.2
+- Normalization ยังต้องใช้ shared canonicalization function ใน API/CSV/Image Import และทดสอบทุก write path; ProductPrice/TaxRate exclusion candidate เพิ่มแล้วแต่ต้องทดสอบ btree_gist; TaxProfile selection และ branch/warehouse lifecycle ยังเปิดอยู่
+- ยังไม่มี incremental-upgrade SQL ที่ผ่าน reconciliation; baseline SQL เป็น standalone file ไม่ใช่ Prisma migration history ที่ใช้เป็น authoritative `--from-migrations` source ได้โดยตรง
+- ไม่มีการ Generate Prisma Client, Apply Migration หรือเชื่อมต่อ/แก้ไข Tenant DB จริงในขั้นตอนนี้
+
+### ความคืบหน้าการดำเนินการก่อนหน้า 2026-11-03
+
+- ยืนยัน Owner A (`owner-a@syncup.local`) เป็น Owner ของ POS; บัญชี ACTIVE และไม่ใช่ Platform Admin
+- ตรวจ Control DB แบบอ่านอย่างเดียว: Workspace A/B ยัง ACTIVE, Owner A/B ถูกต้อง, มี Active Session อย่างละ 1; ยังไม่พบ `pos-local`
+- ตรวจ Tenant DB A/B แบบ read-only: ยังคงผูกกับ DB เดิม `syncup_ws_2a4577ace43c` และ `syncup_ws_e4199e58d35b`; มีเฉพาะ Baseline 3 ตารางและ Migration `20261031000100_tenant_baseline`
+- เพิ่ม Workspace ACTIVE guard ใน `WorkspacesService.membershipFor()` เพื่อปฏิเสธการจัดการสมาชิก/บทบาทเมื่อ Workspace ไม่ ACTIVE; `npm run build --prefix apps/api` ผ่าน
+- **ยังไม่ได้สร้าง POS Workspace, ยังไม่ได้ Suspend A/B, ไม่มีการเปลี่ยน Tenant DB/ข้อมูล และไม่มีการ apply migration**
+- ประเด็นต้องแก้ก่อน Suspend: metadata username ของ Tenant DB A/B เป็น `syncup_provisioner` แต่ `WorkspaceDatabaseRegistry` ตรวจรูปแบบ `syncup_rt_<12 hex>`; ต้องตรวจและ reconcile provisioning identity/credential mapping ก่อนยืนยันเส้นทางใช้งานจริง
+- ตรวจเพิ่มแบบ read-only: Tenant DB ทั้งสองมี owner เป็น `syncup_provisioner`, มี Baseline 3 ตาราง และไม่มี Runtime Role `syncup_rt_<12 hex>`; Control DB มี `secretCipher` ว่างทั้งคู่. `WORKSPACE_DATABASE_ADMIN_URL` เชื่อมต่อได้ แต่ PostgreSQL role `syncup_provisioner` ไม่มี `CREATEROLE`; การ Provision A จึงหยุดที่ `CREATE ROLE` ก่อนสร้าง/แก้ Runtime Credential. คืนสถานะ A เป็น `ACTIVE` หลัง Provisioning error (เดิม ACTIVE); B ไม่ได้เริ่ม Provisioning.
+- ปรับ `WorkspaceProvisioningService` ไม่ให้เปลี่ยน Workspace ที่เดิม ACTIVE เป็น FAILED เมื่อ Provisioning ล้มเหลว; จะตั้ง FAILED เฉพาะ Workspace ที่เริ่มจาก PROVISIONING. `npm run build` ต้องตรวจซ้ำหลังการแก้ไขนี้.
+- **ยังไม่มีการสร้าง Runtime Role, ไม่มีการเขียน Credential ใหม่, ไม่มีการเปลี่ยนสิทธิ์ DB, ไม่มี POS Workspace และไม่มีการ Suspend A/B.** ต้องกำหนด Admin DB credential ที่มี `CREATEROLE` (แยกจาก Runtime Role) ก่อนทำ Credential Reconciliation ต่อ
+- ตรวจเพิ่มรอบ 2026-11-03: `WORKSPACE_DATABASE_RUNTIME_URL` เชื่อมต่อได้ในฐานะ `syncup_runtime` แต่ไม่มี `CREATEROLE`/`CREATEDB`; ไม่มี Admin credential อื่นใน Environment ที่ตรวจพบ. จึงยังไม่มีบัญชีที่ได้รับสิทธิ์พอสร้าง Runtime Roles. ห้ามยกระดับ `syncup_provisioner` หรือ `syncup_runtime` เองจากแอป.
+- ตรวจ Status Gate: `RbacService.hasPermission()` และ `WorkspaceDatabaseRegistry.forMembership()` กรองเฉพาะ Workspace `ACTIVE`; `WorkspacesService.membershipFor()` ก็ปฏิเสธ Workspace ที่ไม่ ACTIVE. อย่างไรก็ตาม ยังไม่มีการเรียก `WorkspaceDatabaseRegistry.forMembership()` จาก Tenant route/service ใน `apps/api/src` ณ ตอนตรวจ จึงต้องผูก Registry เข้ากับ Tenant request path ก่อนถือว่า Tenant API enforcement ครบ. ไม่เพิกถอน User Session แบบ global เมื่อ Suspend เพราะ Session เป็นระดับ User ไม่ใช่ Workspace; การเข้าถึง Workspace ต้องถูกปฏิเสธจาก Membership/Status gate.
+- ตรวจยืนยันหลังการทดลอง: A/B ยังคง `ACTIVE`, `secretCipher` ยังว่าง, POS `pos-local` ยังไม่มี; ไม่มี Runtime Role ถูกสร้างและไม่มี DB permission/tenant data เปลี่ยนแปลง. `npm run build` และ `git diff --check` ผ่าน
 
 > หมายเหตุสถานะ: เครื่องหมาย [x] ใน Roadmap หมายถึงข้อกำหนด/การตัดสินใจหรือเอกสารออกแบบเสร็จตามข้อความของรายการนั้น ไม่ได้ยืนยันว่า Feature ถูก implement หรือ deploy แล้ว เว้นแต่ระบุชัดเจนว่าเป็นงานโค้ดและมีผลทดสอบรองรับ
 
-\n
+
+
+---
+
+## ความคืบหน้าการดำเนินการ 2026-11-04 — Commerce Lifecycle, Runtime Security และ Migration Verification
+
+ Repository และผลทดสอบบน Disposable PostgreSQL เท่านั้น ไม่ได้หมายความว่ามีการ Deploy Commerce Migration หรือแก้ไขฐานข้อมูล Tenant จริง
+
+### Store / Branch / Warehouse Lifecycle
+
+- [x] เพิ่ม shared canonicalization utility ที่ `apps/api/src/shared/canonicalization.ts`; กำหนดกติกา normalize Store/Category slug, SKU, Barcode, UOM และ Branch/Warehouse code ให้ใช้ร่วมกัน
+- [x] เพิ่ม Store creation แบบ Transactional พร้อม Default Branch และ Default Warehouse
+- [x] เพิ่มการสร้าง Branch พร้อม Default Warehouse และการสร้าง Warehouse ภายใต้ Branch
+- [x] เพิ่มการกำหนด Default Branch/Default Warehouse โดย Lock parent row, ทำใน Transaction และบันทึก AuditLog
+- [x] เพิ่ม Archive Warehouse: ป้องกันการ Archive คลังที่ยังเป็นคลัง Active สุดท้าย และเลือก Default Warehouse ทดแทน
+- [x] เพิ่ม Archive Branch: ป้องกันการ Archive สาขา Active สุดท้าย, ตรวจ Stock Balance ที่ on_hand/reserved ไม่เป็นศูนย์, Archive Warehouses ลูกและ Branch แบบ Transactional พร้อมเลือก Default Branch ทดแทน
+- [x] เพิ่ม Permission `commerce.store.manage` ใน WorkspacesService และ Control DB migration `202611030001_commerce_store_manage`
+- [x] เพิ่ม Tenant API routes สำหรับ Store/Branch/Warehouse create, set-default และ archive ตาม Service ที่ implement
+- [x] เพิ่ม `apps/api/scripts/verify-tenant-lifecycle-http.cjs` และ `test:tenant-lifecycle-http`; ทดสอบ HTTP routing ของครบทั้ง 7 mutation endpoints ด้วย production AuthGuard/RbacGuard, anonymous/cross-workspace/missing-permission denial, status contracts และ domain error mapping — PASS (ใช้ mocked service providers; ไม่ใช่การทดสอบกับ Tenant DB จริง)
+- [x] เพิ่ม `verify-tenant-lifecycle-service.cjs` และ `test:tenant-lifecycle-service`; ทดสอบบน Disposable PostgreSQL จริง: create Store/Branch/Warehouse, audit persistence, concurrent default switching, archive/default replacement, last-active guards และ transaction rollback — PASS
+- [x] Raw SQL lifecycle inserts ระบุ UUID ด้วย `gen_random_uuid()` สำหรับ Store/Branch/Warehouse/AuditLog เนื่องจาก Prisma `uuid()` เป็น client-side default
+- [x] เพิ่ม service/database test ยืนยันว่า `stock_balances.reserved > 0` ป้องกันการ Archive Branch — PASS บน Disposable PostgreSQL
+- [ ] ยังต้องทดสอบ Stock Reservation lifecycle/concurrency โดยตรงเมื่อ Reservation API ถูก implement
+- [ ] ทบทวนการ guard Stock Reservation ให้สอดคล้องกับ reserved balance ก่อนเปิดใช้งานจริง
+
+### Tenant Migration Verification
+
+- [x] เพิ่ม Disposable Tenant migration harness: `apps/api/scripts/verify-tenant-migrations.cjs` และคำสั่ง `test:tenant-migrations`
+- [x] ทดสอบ Clean install และ Incremental upgrade บน Disposable PostgreSQL: Lifecycle constraints, atomic default replacement, baseline ledger retention, migration ledger และ duplicate-application guard — PASS
+- [x] เพิ่ม Control DB backup/restore rehearsal: `apps/api/scripts/verify-control-migration-backup-restore.cjs`; ทดสอบ Migration idempotency, permission scope และ Restore Tenant schema/Commerce ledger/sentinel data ไปยัง isolated database — PASS
+- [x] เพิ่ม Runtime grants verification: `apps/api/scripts/verify-runtime-grants.cjs`; ยืนยัน Runtime Role ไม่มี DDL/role-creation privilege, เขียน Migration Ledger ไม่ได้, อ่าน Ledger ได้ และได้รับ default grants สำหรับ future tables/sequences — PASS
+- [x] เพิ่ม Provisioning role isolation verification: `apps/api/scripts/verify-provisioning-role-isolation.cjs`; ยืนยัน membership เดิมถูกถอน, Runtime Role เป็น NOINHERIT และไม่มี memberships, PUBLIC table grants ถูกถอน, encrypted credential persistence และ runtime health check — PASS
+- [x] เพิ่ม PostgreSQL privilege audit utility: `apps/api/scripts/postgres-privilege-audit.cjs` พร้อม Disposable integration test `verify-postgres-privilege-audit.cjs`
+- [x] Privilege audit test — PASS: ทำงานใน READ ONLY transaction, inventory database/schema/relation/function/default ACLs, ตรวจพบ Runtime Role membership และ PUBLIC grants, รายงาน ownership และ PostgreSQL version
+- [x] ตรวจ cleanup หลัง Privilege audit test: Disposable databases=0 และ roles=0
+- [x] API build, `npm run typecheck`, `npm run test:canonicalization`, `npm run test:tenant-lifecycle-http`, `npm run test:tenant-lifecycle-service`, `npm run test:tenant-migrations`, `npm run test:runtime-grants`, `npm run test:provisioning-role-isolation`, `npm run test:postgres-privilege-audit`, `npm run test:control-backup-restore` และ `git diff --check` — PASS เมื่อ 2026-11-04; ESLint ยังรันไม่ได้เพราะไม่มี executable `eslint` และ `pnpm` ไม่ได้ติดตั้งใน environment
+- [x] `npm run test:postgres-privilege-audit` — PASS ผ่าน Local Admin URL ที่จำกัด localhost เท่านั้น
+- [x] ทำ Read-only privilege audit กับ Tenant DB ของ Workspace `pos-local` เมื่อ 2026-11-04; พบ policy deviations 3 รายการ: Runtime Role `INHERIT=true`, `PUBLIC` มี schema `USAGE`, และ Runtime Role มี INSERT/UPDATE/DELETE บน `tenant_migrations` ทั้งที่ควรเป็น SELECT-only; รายละเอียดใน `docs/architecture/pos-local-tenant-privilege-audit-2026-11-04.md` (remediation และ Read-only post-audit PASS เมื่อ 2026-11-04; ดู execution record ด้านล่าง)
+- [ ] ยังไม่มีการ Apply Commerce Migration หรือ Generate Tenant Prisma Client; ผลทดสอบทั้งหมดข้างต้นใช้ Disposable resources ที่สร้างและลบโดย test harness เท่านั้น
+
+### Runtime Security / Migration Runner
+
+- [x] Harden TenantMigrationRunner: ถอน PUBLIC database/schema/table/sequence/function privileges และ PUBLIC default privileges
+- [x] Runtime Role ได้เฉพาะ schema USAGE, table DML, sequence USAGE/SELECT และ default grants สำหรับ objects ใหม่; `tenant_migrations` เป็น SELECT-only
+- [x] Provisioning ถอน inherited role memberships ก่อน Activate Runtime Role และกำหนด NOINHERIT
+- [x] Health check ตรวจ database connection, current_user ให้ตรงกับ runtime URL username และการมีอยู่ของ `tenant_settings`
+- [x] ตรวจสอบ Privilege Audit กับ Workspace Tenant `pos-local` จริงแล้ว; พบ 3 policy deviations ตามรายงาน. ผู้ใช้อนุมัติ remediation แล้ว และดำเนินการผ่าน PostgreSQL provisioner session แบบมี precondition/transaction guard เมื่อ 2026-11-04; Read-only post-audit และ Runtime Role smoke test PASS แล้ว
+
+### ลำดับงานถัดไป
+
+1. [x] ได้รับการยืนยันและทำ Read-only Privilege Audit กับ `pos-local` แล้ว; ไม่พบการเปลี่ยนแปลงฐานข้อมูล
+2. [x] จัดทำผล Audit และระบุ remediation 3 รายการใน `docs/architecture/pos-local-tenant-privilege-audit-2026-11-04.md`; **แก้ไขแล้วและตรวจ Read-only ซ้ำ PASS เมื่อ 2026-11-04**
+3. [x] ได้รับอนุมัติและดำเนินการ remediation 3 รายการกับ `pos-local` ผ่าน PostgreSQL provisioner session แบบมี guard เมื่อ 2026-11-04; Read-only Audit และ Runtime Role smoke test หลังแก้ไข PASS
+4. [x] เพิ่ม HTTP lifecycle route/guard integration harness; PASS โดยใช้ mocked services
+5. [x] เพิ่ม service/database integration test บน Disposable PostgreSQL สำหรับ lifecycle, audit, rollback, concurrency และ default replacement — PASS
+6. [x] ยืนยัน Branch archive guard ปฏิเสธ Warehouse ที่มี reserved stock — PASS; Reservation lifecycle/concurrency ผ่าน Service จริงบน Disposable PostgreSQL แล้ว
+7. ทบทวน Migration Reconciliation และ Migration Sign-off ให้ครบก่อน Generate Prisma Client หรือ Apply Migration จริง
+8. หลัง Sign-off จึงเริ่ม Tenant Commerce deployment และทดสอบ Business APIs ตาม Phase
+
+> หมายเหตุ: [x] หมายถึงมี implementation หรือผลทดสอบตามที่ระบุ; Disposable test PASS ไม่ใช่หลักฐานว่า Workspace Tenant จริงผ่านการตรวจหรือว่า Migration ถูก Deploy แล้ว
+
+
+## Stock Reservation / Inventory Service MVP and Disposable-DB Integration (2026-11-04)
+
+- [x] Added `StockInventoryModule`, `StockInventoryService` and `StockInventoryController` with Membership-scoped Tenant DB resolution through `WorkspaceDatabaseRegistry`.
+- [x] Added authenticated API routes for reserve/release/consume/expiry, receiving, direct issue, reversal and balance read; all routes require `commerce.inventory.manage`.
+- [x] Added control-plane permission seed migration `202611040001_commerce_inventory_manage` and included the permission in new Workspace default admin roles. The migration file is prepared only; it has NOT been applied.
+- [x] Reservation lifecycle uses row locks and idempotent replay; expired ACTIVE reservations are released using database time and bounded `SKIP LOCKED` batches.
+- [x] Reservation and Release do not create physical `StockMovement` rows; removed reservation-only values from `StockMovementType` and `StockReferenceType` Prisma enums and aligned the clean-install / upgrade SQL candidates.
+- [x] Receiving, issue, consume and reversal update StockBalance, InventoryCost and physical StockMovement in one transaction. WAC uses PostgreSQL NUMERIC, 3-decimal quantities, 6-decimal cost/value, HALF_UP, zero-stock reset and reconciliation guard.
+- [x] Reversal is the exact opposite of the original movement, records `reversal_of_id`, requires a reason and is idempotent / limited to one reversal per original.
+- [x] Six service transaction scenarios now call the production `StockInventoryService`; the seventh database CHECK-constraint scenario is verified directly, and the HTTP smoke test calls the real controller and production AuthGuard/RbacGuard against the same Disposable PostgreSQL DB.
+- [x] Additional Disposable DB tests cover reservation expiry, receipt WAC, receipt/reversal idempotency, cost reconciliation and HTTP authorization/routing.
+- [x] `npm run test:stock-reservation-concurrency` passes; cleanup verified with zero `syncup_stock_concurrency_*` databases and zero remaining sessions.
+- [ ] Full Opening Stock/Draft Direct Receiving, multi-line receiving, Supplier/PO validation, Return, Transfer, CSV Adjustment, audit UI and background expiry scheduling remain outside this MVP and require separate implementation/tests.
+- Migration Sign-off and deployment to any real Tenant remain on hold. No Tenant database or control-plane migration was changed by this work.
+
+## Continuation update — 2026-11-04
+
+- Fixed the Inventory `consume()` expiry guard: the locked reservation read now calculates `is_expired` using PostgreSQL `clock_timestamp()` before any balance/cost mutation. An expired ACTIVE reservation is released and cannot create a SALE movement.
+- Consumption now preserves the reservation's `reference_type` and `reference_id` on its physical SALE movement (falling back to the reservation id when no source reference id was supplied).
+- Extended the Disposable PostgreSQL inventory harness with a regression case proving that consuming an expired reservation releases it, leaves on-hand stock unchanged, and writes no SALE movement. Re-ran it in this continuation session against localhost-only Disposable PostgreSQL; PASS.
+- Re-ran the Store/Branch/Warehouse service integration suite against Disposable PostgreSQL; PASS for create, defaults, concurrency, archive invariants, reserved-stock protection and transaction rollback.
+- Re-ran Tenant clean-install/incremental migration candidate acceptance; PASS. Runtime least-privilege grants, PostgreSQL privilege-audit detection, provisioning role-isolation, and Control DB migration + Tenant backup/restore rehearsal also PASSed on uniquely named Disposable DBs.
+- Re-ran Tenant Lifecycle HTTP integration and canonicalization tests; PASS. API/Web build and typecheck, Control/Tenant Prisma schema validation and `git diff --check` PASS from the preceding checks.
+- Regenerated `tenant-commerce-incremental-upgrade.candidate.sql` from the current clean-install/custom/canonicalization/lifecycle candidates. It remains review-only.
+- Current-session checks: API build/typecheck PASS; Web build/typecheck PASS; both Control and Tenant Prisma schemas validate; canonicalization tests PASS; Tenant Lifecycle HTTP integration harness PASS; `git diff --check` PASS.
+- Remaining tooling limitation: API lint cannot start because ESLint is not installed for that package; Web lint cannot start because the repository has no ESLint 9 flat config.
+- No Prisma Client was generated. No Control DB migration or Tenant SQL was applied. No real Tenant database was modified. Migration Sign-off remains NOT GRANTED.
+
+
+## pos-local privilege remediation — 2026-11-04
+
+- [x] Applied the three previously approved least-privilege corrections to pos-local only: Runtime Role NOINHERIT; revoke PUBLIC schema public USAGE; make tenant_migrations SELECT-only for Runtime Role.
+- [x] Applied inside a single transaction with exact database/role/owner preconditions, a transaction advisory lock and in-transaction postcondition checks.
+- [x] Re-ran the privilege audit in a read-only transaction: zero ERROR findings.
+- [x] Connected using the registered Runtime Role credential and verified read-only access to tenant_migrations and tenant_settings; schema USAGE remains available and migration-ledger writes are not granted.
+- [x] Verified database/table ownership and role memberships remain unchanged.
+- No schema migration, Control DB mutation, application data mutation, Prisma Client generation or deployment was performed. Migration Sign-off remains NOT GRANTED.
+
+
+## Final Preflight — pos-local — 2026-11-04
+
+- [x] Read-only registry/database identity check: `pos-local` ACTIVE; Tenant DB `syncup_ws_c0130bf3c1c0`; Runtime Role `syncup_rt_c0130bf3c1c0`.
+- [x] Read-only PostgreSQL compatibility snapshot: PostgreSQL 18.6, UTF8; exact baseline ledger row retained; no Commerce tables exist. Incremental Upgrade is the correct candidate path.
+- [x] Read-only extension check: `btree_gist` 1.8 is available/trusted but not installed; Provisioner database/schema CREATE capability confirmed. No extension installed.
+- [x] Rechecked Runtime Role NOINHERIT and least-privilege schema/Ledger grants; no lock waits or idle-in-transaction sessions observed.
+- [x] Disposable PostgreSQL 18.6 backup/restore rehearsal PASS; restored schema, Store row, Tenant setting sentinel and Commerce migration ledger verified; disposable databases cleaned up.
+- [x] Disposable Control DB checks PASS for Store and Inventory permission migrations: idempotent and admin-only grants.
+- [x] Actual `pos-local` custom-format backup and isolated Recovery restore completed; see Actual pos-local Backup/Restore Rehearsal below for ID, timestamp, SHA-256 and verification results.
+- [ ] Confirm expected collation/ctype `English_United States.1252`.
+- [ ] Approve maintenance window, application revision/checksum, traffic/write freeze and rollback operator.
+- [ ] Separately authorize/apply Control DB permission migrations only after sign-off; current real Control DB has neither Commerce permission key nor migration history entry.
+- [ ] Obtain explicit Migration Sign-off naming Workspace `pos-local`, Incremental Upgrade candidate `docs/architecture/tenant-commerce-incremental-upgrade.candidate.sql`, version `202611030001_tenant_commerce`, SHA-256 `836f1af276b908813be9089cb3a2813363820b9e00d3a054d7693af62d2473b3`.
+
+Final Preflight disposition: **PARTIAL PASS; Migration Sign-off NOT GRANTED.** No real Tenant/Control migration, extension installation, Prisma Client generation or deployment was performed.
+
+## Actual pos-local Backup/Restore Rehearsal — 2026-11-04
+
+- [x] Backed up actual `pos-local` with PostgreSQL 18.6 custom format and restored the exact archive into isolated Recovery DB `syncup_recovery_pos_local_20261104075738_5bab7de0`.
+- [x] Verified schema, every table's row count/content checksum, migration ledger, database identity/version/locale and Runtime Role isolation.
+- [x] Backup file: `%LOCALAPPDATA%\SyncUp\Backups\pos-local_20261104075738_5bab7de0.dump`; 4,746 bytes; created 2026-11-04 14:57:40.615 +07:00.
+- [x] SHA-256: `e70190385bf33d614892cc37c41349e0f002479a16ba830cc4723aa9c27d21d5`.
+- [ ] Confirm retention/storage policy and collation; define maintenance/deployment/rollback window; separately authorize Control DB permission migrations; obtain explicit named-target Migration Sign-off.
+- Backup and Recovery DB remain local pending explicit cleanup approval; no automatic expiry/off-device copy is configured.
+
+## pos-local Final Sign-off Review — 2026-11-04 (read-only; pending owner confirmations)
+
+- [x] Reviewed the baseline DDL and application references for `tenant_settings` and `audit_events`.
+- `tenant_settings=0` is consistent with the current provisioning/baseline lifecycle: the baseline creates the table but does not seed settings, and the workspace provisioning flow does not insert default rows. This is an evidence-based expectation, not confirmation from the Workspace owner that no business settings should already exist.
+- `audit_events=0` is consistent with a workspace that has not yet performed operations through the currently identified Stock/Inventory audit writer. Confirm with the Workspace owner that no auditable activity is expected to have occurred.
+- Do not add placeholder settings or synthetic audit rows merely to make either table non-empty.
+- [ ] Obtain explicit owner confirmation that both zero-row counts are expected for `pos-local` before first Commerce use.
+- Proposed Backup/Recovery retention policy (NOT YET APPROVED): daily backups 30 days; weekly backups 12 weeks; monthly backups 12 months; pre-migration backup retained at least 30 days after successful migration acceptance; rehearsal Recovery DB retained until an off-host backup and restore are verified, then at least 7 further days before requesting cleanup approval; one encrypted off-host copy; SHA-256 verification on every copy; quarterly restore test.
+- Existing backup and Recovery DB remain retained locally. No cleanup, automatic expiry, off-host copy, or retention-policy activation was performed.
+- [ ] Approve or revise the proposed Backup/Recovery retention and off-host storage policy.
+- [ ] Confirm `English_United States.1252` as the intended Tenant collation/ctype.
+- [ ] Define maintenance window, application release revision/checksum, traffic/write freeze, deployment operator and rollback plan.
+- [ ] Separately authorize the two Control DB permission migrations; they remain unapplied to the real Control DB.
+- [ ] Obtain explicit Migration Sign-off naming `pos-local`, candidate `docs/architecture/tenant-commerce-incremental-upgrade.candidate.sql`, version `202611030001_tenant_commerce`, SHA-256 `836f1af276b908813be9089cb3a2813363820b9e00d3a054d7693af62d2473b3`.
+
+Final review disposition: **PARTIAL PASS — Migration Sign-off NOT GRANTED.** This review did not apply Tenant or Control DB migrations, install extensions, generate a Tenant Prisma Client, deploy, modify source Tenant data, or delete the retained backup/Recovery DB.
