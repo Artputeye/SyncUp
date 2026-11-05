@@ -85,7 +85,7 @@
 
 ### Phase 0 — Product decisions & Foundation audit (P0)
 
-- [ ] 0.1 ตรวจสถานะ Auth, Workspace Provisioning, Tenant DB Registry และ RBAC
+- [x] 0.1 ตรวจสถานะ Auth, Workspace Provisioning, Tenant DB Registry และ RBAC — Read-only audit completed 2026-11-05; partial pass and remaining gaps recorded in `docs/architecture/foundation-audit-2026-11-05.md`.
 - [ ] 0.1a เพิ่ม Forgot Password/Password Reset สำหรับบัญชีผู้ใช้: ขอรีเซ็ตผ่านอีเมล, ตอบกลับแบบไม่เปิดเผยว่ามีบัญชีหรือไม่, ใช้ Token แบบสุ่มที่เก็บในรูป Hash มีวันหมดอายุและใช้ได้ครั้งเดียว, จำกัดอัตราการขอ, บันทึก Audit และกำหนดนโยบาย Session หลังเปลี่ยนรหัสผ่าน
 - [ ] 0.1b เพิ่ม Google Sign-In สำหรับพนักงาน/เจ้าของร้านผ่าน OAuth 2.0 / OpenID Connect: ตรวจสอบ ID Token ฝั่ง Server (issuer, audience, signature, expiry, nonce/state), จับคู่บัญชีด้วย Google subject ที่คงที่ ไม่ใช้ email เป็นตัวระบุหลัก, กำหนดขั้นตอนเชื่อมบัญชีเดิม/ป้องกัน Account Takeover, ตรวจ Workspace Membership/RBAC หลัง Login, รองรับ callback/redirect allowlist, ปิดการใช้ implicit flow และบันทึก Audit; เก็บ Client Secret ฝั่ง Server เท่านั้น
 - [ ] 0.2 ทำให้ API Boot ผ่านทุก Module และมี Smoke Test
@@ -712,16 +712,93 @@ Final Preflight disposition: **PARTIAL PASS; Migration Sign-off NOT GRANTED.** N
 ## pos-local Final Sign-off Review — 2026-11-04 (read-only; pending owner confirmations)
 
 - [x] Reviewed the baseline DDL and application references for `tenant_settings` and `audit_events`.
-- `tenant_settings=0` is consistent with the current provisioning/baseline lifecycle: the baseline creates the table but does not seed settings, and the workspace provisioning flow does not insert default rows. This is an evidence-based expectation, not confirmation from the Workspace owner that no business settings should already exist.
-- `audit_events=0` is consistent with a workspace that has not yet performed operations through the currently identified Stock/Inventory audit writer. Confirm with the Workspace owner that no auditable activity is expected to have occurred.
+- `tenant_settings=0` is consistent with the current provisioning/baseline lifecycle: the baseline creates the table but does not seed settings, and the workspace provisioning flow does not insert default rows. The Workspace owner explicitly confirmed that no default settings rows are expected because pos-local has no business data (2026-11-05).
+- `audit_events=0` is consistent with a workspace that has not yet performed operations through the currently identified Stock/Inventory audit writer. The Workspace owner explicitly confirmed that no business activity has occurred that should have produced audit rows (2026-11-05).
 - Do not add placeholder settings or synthetic audit rows merely to make either table non-empty.
-- [ ] Obtain explicit owner confirmation that both zero-row counts are expected for `pos-local` before first Commerce use.
-- Proposed Backup/Recovery retention policy (NOT YET APPROVED): daily backups 30 days; weekly backups 12 weeks; monthly backups 12 months; pre-migration backup retained at least 30 days after successful migration acceptance; rehearsal Recovery DB retained until an off-host backup and restore are verified, then at least 7 further days before requesting cleanup approval; one encrypted off-host copy; SHA-256 verification on every copy; quarterly restore test.
-- Existing backup and Recovery DB remain retained locally. No cleanup, automatic expiry, off-host copy, or retention-policy activation was performed.
-- [ ] Approve or revise the proposed Backup/Recovery retention and off-host storage policy.
+- [x] Workspace owner confirmed both zero-row counts are expected for `pos-local` before first Commerce use (2026-11-05).
+- [x] Workspace owner approved the Backup/Recovery retention policy (2026-11-05): daily backups retained 30 days; weekly backups 12 weeks; monthly backups 12 months; each pre-migration backup retained at least 30 days after successful migration acceptance; rehearsal Recovery DB retained until an encrypted off-host backup and restore are verified, then retained at least 7 additional days before requesting cleanup approval; maintain one encrypted off-host copy; verify SHA-256 on every copy; perform a restore test quarterly.
+- Policy approval is recorded; operational activation is pending an approved off-host destination/credentials, retention-job implementation and verification. No automatic expiry, deletion, off-host transfer, or cleanup was performed. The existing backup and Recovery DB remain retained locally.
+- [x] Approve the proposed Backup/Recovery retention and off-host storage policy (2026-11-05).
 - [ ] Confirm `English_United States.1252` as the intended Tenant collation/ctype.
 - [ ] Define maintenance window, application release revision/checksum, traffic/write freeze, deployment operator and rollback plan.
 - [ ] Separately authorize the two Control DB permission migrations; they remain unapplied to the real Control DB.
 - [ ] Obtain explicit Migration Sign-off naming `pos-local`, candidate `docs/architecture/tenant-commerce-incremental-upgrade.candidate.sql`, version `202611030001_tenant_commerce`, SHA-256 `836f1af276b908813be9089cb3a2813363820b9e00d3a054d7693af62d2473b3`.
 
 Final review disposition: **PARTIAL PASS — Migration Sign-off NOT GRANTED.** This review did not apply Tenant or Control DB migrations, install extensions, generate a Tenant Prisma Client, deploy, modify source Tenant data, or delete the retained backup/Recovery DB.
+
+
+## Synology NAS Backup Destination Configuration — 2026-11-05
+
+- [x] Added a Platform Admin-only API to save the backup destination path outside the database, avoiding a Control DB schema migration.
+- [x] Added a Backup / NAS panel in System Admin; the homepage Backup button keeps the entered path through login and saves it to the API configuration.
+- [x] API validates absolute/UNC paths and checks that its own process can access the directory with write permission.
+- [x] Added Synology DSM/SMB setup notes in `docs/operations/synology-backup-destination.md`.
+- [ ] Verify against the actual DS220+ Shared Folder after its network path and Windows service-account permissions are configured.
+- [ ] Implement actual PostgreSQL backup creation, scheduled retention, encrypted off-host copy and quarterly restore verification.
+- No NAS credentials were requested or stored; no database migration or actual backup was run.
+
+
+## Foundation audit continuation — 2026-11-05
+
+- [x] Completed read-only audit of Auth, Workspace Provisioning, Tenant DB Registry and RBAC; findings and remaining production gaps are recorded in `docs/architecture/foundation-audit-2026-11-05.md`.
+- [x] Fixed Workspace bootstrap ordering: default permissions/roles are seeded before Tenant provisioning can activate the Workspace; bootstrap failure marks the Workspace FAILED and does not start Tenant provisioning.
+- [x] Added `apps/api/scripts/verify-workspace-bootstrap.cjs` and `test:workspace-bootstrap`; ordering and failure-state assertions PASS.
+- [x] API build and typecheck PASS after the source change.
+- [ ] Remaining: authentication rate limiting/CSRF/DTO hardening, password reset, Google Sign-In, bounded Tenant client cache/invalidation, formal Owner/Admin/Manager/Cashier/Inventory Staff permission matrix, and focused authorization tests.
+- No real database, migration, Prisma Client generation or deployment was performed.
+
+
+## Workspace Permission Matrix — 2026-11-05
+
+- [x] Define Owner, Admin, Manager, Cashier, Inventory Staff, Member and Viewer permissions in `docs/architecture/workspace-permission-matrix.md`.
+- [x] Map Store, branch, warehouse, Product Catalog, pricing, inventory, POS sales, orders and reports to explicit permission keys.
+- [x] Centralize permission definitions and default role grants in `apps/api/src/core/rbac/permission-catalog.ts`.
+- [x] Seed Admin, Manager, Cashier and Inventory Staff roles during Workspace bootstrap; preserve legacy Member and Viewer roles.
+- [x] Keep Platform Admin authorization separate from Workspace RBAC.
+- [x] API build, typecheck, Workspace bootstrap test and git diff --check PASS.
+- [ ] Before production: add endpoint-level authorization tests and branch/warehouse scope rules; design discount/refund approvals and sensitive margin permissions.
+- No real database migration or role reassignment of existing users was performed.
+
+
+## Store Management foundation — 2026-11-05
+
+- [x] Reuse the existing Tenant Store/Branch/Warehouse lifecycle instead of duplicating create/archive/default logic.
+- [x] Add a membership-scoped Store listing API with active Branch count and default Branch summary.
+- [x] Protect Store listing with `commerce.store.view`; Store creation remains protected by `commerce.store.manage`.
+- [x] Add the Workspace Store Management page with Store listing and create flow; creation automatically provisions the default Branch and Warehouse in the existing transaction.
+- [x] Add HTTP RBAC/tenant-isolation and query-service contract checks.
+- [x] API build/typecheck, Web build/typecheck, Store query tests and git diff --check PASS.
+- [ ] Next: Store detail/edit and Store status lifecycle; then dedicated Branch Management UI and endpoints.
+- No real Tenant/Control DB migration, Prisma Client generation, or deployment was performed.
+
+
+## Progress update — 2026-11-05 (Store Detail & Edit)
+
+### Current status
+- [x] Store Management listing and create flow: membership-scoped listing, active Branch/default Branch summary, permission enforcement and default Branch/Warehouse creation reuse.
+- [x] Store Detail API: GET is protected by `commerce.store.view`; PATCH is protected by `commerce.store.manage` and resolves the Tenant DB through the caller's Workspace membership.
+- [x] Store Edit: name, description, contact email/phone, address, currency and timezone; Store slug is read-only in the current UI.
+- [x] Store update uses a transaction and row lock, validates/normalizes input, and records before/after values in `STORE_UPDATED` audit data.
+- [x] Store listing cards navigate to the Store detail/edit page; edit controls are presented according to the current owner/admin/manager UI role check, with server-side RBAC remaining authoritative.
+- [x] Store edit service and HTTP contract checks, Store query service/HTTP checks, Tenant lifecycle HTTP checks and Workspace bootstrap checks — PASS.
+- [x] API build/typecheck and Web typecheck/build — PASS; `git diff --check` — PASS (line-ending warnings only).
+- [ ] Improve Store form currency/timezone selection beyond the current limited dropdown choices.
+- [ ] Implement Store status lifecycle and finish dedicated Branch Management UI/detail/edit flows.
+- No Prisma schema change, Prisma Client generation, real Tenant/Control DB migration or deployment was performed in this Store Detail & Edit task.
+
+### Progress measurement
+- Checklist snapshot in this plan at this update: 89 checked / 207 unchecked = 296 checkbox items; raw checkbox completion is **30.1%**. This is a mechanical count, includes duplicated/overlapping checklist items and does not weight task size.
+- Delivery estimate for the currently active Foundation + Store Management workstream is approximately **65%**; this is not the completion percentage of the entire SyncUp product roadmap.
+- Overall roadmap progress should therefore be communicated as **about 30% by raw checklist count**, with the active Foundation/Store workstream about 65%. Recalculate after deduplicating and weighting roadmap tasks for a more meaningful project KPI.
+
+### Next implementation sequence
+1. Branch Management UI and detail/edit flows, reusing the existing Branch/Warehouse lifecycle services and workspace/store scope.
+2. Warehouse Management UI and operational workflows.
+3. Product Catalog (categories, products, variants, SKU/barcode, UOM and pricing).
+4. Inventory operations UI (opening stock, receiving, issue, adjustment, transfer and movement history).
+5. POS Sales MVP.
+
+### Deployment gates (still blocking production rollout)
+- Confirm Tenant collation/ctype, maintenance/release/rollback plan and explicit named-target Migration Sign-off.
+- Control DB permission migrations and Tenant Commerce migration candidates remain unapplied to the real databases; no Prisma Client generation or production deployment is authorized by this progress update.
+- Backup/NAS implementation remains deferred per the user's instruction; do not resume it as part of the next feature phase without a new request.
