@@ -41,6 +41,7 @@ export class PlatformAdminService {
 
   async listWorkspaces() {
     const rows = await this.db.workspace.findMany({
+      where: { slug: { not: "test" } },
       include: { database: true, _count: { select: { memberships: true } } },
       orderBy: { createdAt: "desc" }
     });

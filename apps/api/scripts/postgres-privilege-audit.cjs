@@ -1,0 +1,25 @@
+const {Client}=require("pg");
+const url=process.env.TENANT_AUDIT_DATABASE_URL,roleName=process.env.TENANT_AUDIT_RUNTIME_ROLE,ownerName=process.env.TENANT_AUDIT_MIGRATION_OWNER||null;
+
+async function collectAudit(c,target){
+ const specs=[
+ ["server","SELECT version() version,current_database() database,current_user audit_user,current_setting('server_version_num')::int server_version_num"],
+ ["role","SELECT oid,rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls,rolcanlogin FROM pg_roles WHERE rolname=$1",[target]],
+ ["memberships","SELECT g.rolname granted_role,mr.rolname member_role,m.admin_option FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid JOIN pg_roles mr ON mr.oid=m.member WHERE mr.rolname=$1",[target]],
+ ["databaseAcl","SELECT d.datname,pg_get_userbyid(d.datdba) owner,CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END grantee,a.privilege_type,a.is_grantable FROM pg_database d CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl,acldefault('d',d.datdba))) a WHERE d.datname=current_database()"],
+ ["schemaAcl","SELECT n.nspname,pg_get_userbyid(n.nspowner) owner,CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END grantee,a.privilege_type,a.is_grantable FROM pg_namespace n CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) a WHERE n.nspname='public'"],
+ ["relationAcl","SELECT c.relname,c.relkind,pg_get_userbyid(c.relowner) owner,CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END grantee,a.privilege_type,a.is_grantable FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl,'{}'::aclitem[])) a WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S')"],
+ ["functionAcl","SELECT p.proname,pg_get_userbyid(p.proowner) owner,CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END grantee,a.privilege_type,a.is_grantable FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE n.nspname='public'"],
+ ["defaultAcl","SELECT pg_get_userbyid(d.defaclrole) owner_role,n.nspname schema,d.defaclobjtype object_type,CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END grantee,a.privilege_type,a.is_grantable FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid=d.defaclnamespace CROSS JOIN LATERAL aclexplode(d.defaclacl) a WHERE d.defaclnamespace=0 OR n.nspname='public'"],
+ ["ownership","SELECT 'DATABASE' object_type,d.datname object_name,pg_get_userbyid(d.datdba) owner FROM pg_database d WHERE d.datname=current_database() UNION ALL SELECT 'SCHEMA',n.nspname,pg_get_userbyid(n.nspowner) FROM pg_namespace n WHERE n.nspname='public' UNION ALL SELECT 'RELATION',c.relname,pg_get_userbyid(c.relowner) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S') UNION ALL SELECT 'FUNCTION',p.proname,pg_get_userbyid(p.proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'"]
+ ];
+ const result={};for(const [key,sql,args] of specs){const r=await c.query(sql,args||[]);result[key]=key==="server"||key==="role"?r.rows[0]||null:r.rows;}
+ const f=[],r=result.role;if(!r)f.push({severity:"ERROR",code:"RUNTIME_ROLE_MISSING"});
+ if(r){for(const k of ["rolsuper","rolinherit","rolcreaterole","rolcreatedb","rolreplication","rolbypassrls"])if(r[k])f.push({severity:"ERROR",code:"RUNTIME_ROLE_ELEVATED",detail:k});if(result.memberships.length)f.push({severity:"ERROR",code:"RUNTIME_ROLE_MEMBERSHIP",detail:result.memberships});const own=result.ownership.filter(x=>x.owner===target);if(own.length)f.push({severity:"ERROR",code:"RUNTIME_OWNS_OBJECT",detail:own});}
+ for(const k of ["databaseAcl","schemaAcl","relationAcl","functionAcl","defaultAcl"]){const rows=result[k].filter(x=>x.grantee==="PUBLIC");if(rows.length)f.push({severity:"ERROR",code:"PUBLIC_PRIVILEGE",detail:{scope:k,grants:rows}});}
+ if(result.databaseAcl.some(x=>x.grantee==="PUBLIC"&&x.privilege_type==="CONNECT"))f.push({severity:"ERROR",code:"PUBLIC_CONNECT"});
+ if(ownerName){const wrong=result.ownership.filter(x=>x.owner!==ownerName);if(wrong.length)f.push({severity:"WARN",code:"MIXED_OBJECT_OWNERSHIP",detail:wrong});}
+ return {...result,target:{runtimeRole:target,migrationOwner:ownerName},findings:f};
+}
+async function main(){if(!url||!roleName)throw Error("Set TENANT_AUDIT_DATABASE_URL and TENANT_AUDIT_RUNTIME_ROLE locally.");const c=new Client({connectionString:url,connectionTimeoutMillis:8000,application_name:"syncup-read-only-tenant-privilege-audit",options:"-c default_transaction_read_only=on"});await c.connect();try{await c.query("BEGIN READ ONLY");const r=await collectAudit(c,roleName);await c.query("COMMIT");console.log(JSON.stringify(r,null,2));if(r.findings.some(x=>x.severity==="ERROR"))process.exitCode=2;}catch(e){await c.query("ROLLBACK").catch(()=>{});throw e;}finally{await c.end();}}
+module.exports={collectAudit};if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});

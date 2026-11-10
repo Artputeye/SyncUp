@@ -802,3 +802,184 @@ Final review disposition: **PARTIAL PASS — Migration Sign-off NOT GRANTED.** T
 - Confirm Tenant collation/ctype, maintenance/release/rollback plan and explicit named-target Migration Sign-off.
 - Control DB permission migrations and Tenant Commerce migration candidates remain unapplied to the real databases; no Prisma Client generation or production deployment is authorized by this progress update.
 - Backup/NAS implementation remains deferred per the user's instruction; do not resume it as part of the next feature phase without a new request.
+
+
+## Product API Read-only — 2026-11-06
+
+### Implementation status
+
+- [x] เพิ่ม `ProductsModule`, `ProductsController` และ `ProductQueryService` สำหรับ Product List, Product Detail และ SKU/Barcode Lookup
+- [x] ทุก Endpoint ใช้ GET และบังคับ `AuthGuard`, `RbacGuard`, `commerce.product.view`; Tenant DB ถูก resolve จาก Workspace Membership ผ่าน `WorkspaceDatabaseRegistry`
+- [x] Product List รองรับ Pagination, Status/Store filter และ Text Search; Detail แสดง Variant/UOM/Barcode; Lookup ค้นหา SKU และ Barcode แบบ exact match
+- [x] API typecheck และ build ผ่าน
+- [x] Manager authentication บน `pos-local` ผ่าน (HTTP 201)
+- [x] Manager GET Product List ผ่าน (HTTP 200); หลัง seed มีสินค้า 1 รายการ
+- [x] Negative checks ผ่านตามคาด: Detail ด้วย UUID ที่ไม่มีอยู่คืน HTTP 404
+- [x] Positive checks ของ Product Detail และ SKU/Barcode Lookup ผ่านบน `pos-local` เมื่อ 2026-11-06: Detail และ Lookup ทั้ง SKU และ Barcode ได้ HTTP 200 จากสินค้าทดสอบ `TEST-EA-001`
+
+### Test data preparation — completed 2026-11-06
+
+- [x] ผู้ใช้อนุมัติให้สร้างข้อมูลทดสอบหนึ่งสินค้า และอนุมัติ UOM `EA` (ชิ้น) เพื่อรองรับ Variant
+- [x] สร้างหรือยืนยัน UOM `EA` ใน Tenant DB `syncup_ws_c0130bf3c1c0`
+- [x] สร้าง Product ทดสอบหนึ่งรายการ พร้อม Variant, SKU และ Barcode
+- [x] ทดสอบ GET Product List, Product Detail และ SKU/Barcode Lookup ด้วยข้อมูลจริง แล้วบันทึก HTTP status และผลลัพธ์
+- [x] ตรวจสอบและยืนยันการเชื่อมต่อฐานข้อมูล `syncup_ws_c0130bf3c1c0` และ Schema `public` ที่มีตาราง Product ก่อน Seed
+
+**ข้อสังเกตการเตรียมข้อมูล:** ครั้งก่อน pgAdmin เจอ `relation "public.products" does not exist` และ SQLSTATE `25P02` เพราะ session ไม่ได้อยู่ที่ Tenant DB/schema ที่ migration ถูก apply แล้ว ตรวจเมื่อ 2026-11-06 ด้วย session ใหม่: `current_database() = syncup_ws_c0130bf3c1c0`, `current_schema() = public`, role `syncup_provisioner`, host `127.0.0.1` ตาราง `products`, `unit_of_measures`, `product_variants`, `variant_barcodes` และ `variant_uoms` มีอยู่ใน `public` และ ledger มี `202611030001_tenant_commerce`
+
+ข้อมูลทดสอบที่ commit แล้ว มีอย่างละ 1 แถว:
+- UOM `EA` / `ea`, ชื่อ `ชิ้น`, dimension `COUNT`
+- Product `สินค้าทดสอบ`, status `ACTIVE`, id `e91ad73d-dd00-435d-850d-25e1fb0b4994`
+- Variant SKU `TEST-EA-001`, barcode `8850000000017`, base UOM `EA`
+- Audit log action `PRODUCT_TEST_SEEDED`
+
+ผล HTTP ด้วย Manager ของ `pos-local` (`manager-e2e@syncup.local`):
+- GET Product List = 200, total 1, ชื่อ `สินค้าทดสอบ`, SKU `TEST-EA-001`
+- GET Product Detail = 200, UOM `EA`, barcode `8850000000017`
+- GET Lookup SKU `TEST-EA-001` = 200
+- GET Lookup barcode `8850000000017` = 200
+- GET Detail ด้วย UUID ที่ไม่มีอยู่ = 404
+
+### Scope and safety
+
+- ทดสอบ Product endpoints ด้วย GET เท่านั้น; การ POST Login ใช้เพื่อสร้าง Manager session สำหรับทดสอบ
+- เพิ่มข้อมูลทดสอบหนึ่งชุดใน `pos-local` แล้ว: UOM `EA`, Product, Variant, Barcode และ Audit log ตามที่อนุมัติ ไม่มีการเปลี่ยน Store, Branch, Warehouse หรือ Migration
+- Positive checks ของ Product Detail และ SKU/Barcode Lookup ผ่านด้วย HTTP 200 จาก `TEST-EA-001`
+- ขั้นถัดไปคือวางแผน Product Management UI และ Write APIs แยกเป็นขั้นตอน และขออนุมัติก่อนเปลี่ยนข้อมูลธุรกิจจริงเพิ่มเติม
+
+
+## Product Management E2E — 2026-11-06
+
+### Implementation and verification
+- [x] Add Playwright Product Management E2E covering Manager Create, Detail, Edit, exact SKU lookup, exact Barcode lookup and Archive.
+- [x] Verify Cashier can read Product List, Detail and Lookup, while Create, Update and Archive are rejected with HTTP 403.
+- [x] Verify Cashier Product Detail page is read-only and does not require the separate members.view permission.
+- [x] Fix Product page permission projection: GET /api/workspaces now includes only the current user's role keys; Product List/Detail no longer call the members listing API just to infer whether the current user can manage products.
+- [x] Add repeatable command npm run test:e2e:products in apps/web.
+- [x] API typecheck/build and Web typecheck/build — PASS.
+- [x] Playwright Product Management E2E — PASS (Manager lifecycle + Cashier read-only RBAC).
+
+### Isolated E2E data
+- Workspace: e2e-commerce-20261106; Tenant DB: syncup_ws_e65ca36b8068.
+- Added UOM EA / ea (ชิ้น) to this E2E tenant because it initially had no active UOM.
+- E2E created, edited, looked up and archived its Product/Variant; final status for Product and Variant is ARCHIVED.
+- Three unique E2E Product/Variant records were created during the initial failing attempt and two subsequent passing runs; all three are ARCHIVED and confined to the dedicated E2E tenant. The initial attempt exposed the Cashier page permission dependency; both complete reruns passed.
+- Cashier denied write attempts did not alter the final Product record.
+- No changes to pos-local, no production migration, no deployment and no commit/push were performed.
+
+### Follow-up
+- [ ] Add integration-level Product Command tests against an ephemeral PostgreSQL database for transaction rollback, duplicate SKU/barcode conflicts and multi-barcode preservation.
+- [ ] Keep E2E workspace Commerce lifecycle state unchanged; do not run module Enable/Disable tests as part of Product E2E.
+
+
+---
+
+## Roadmap reconciliation and Inventory readiness — 2026-11-10
+
+สถานะนี้เทียบ Implementation/ผลทดสอบที่มีหลักฐานกับ Roadmap; ไม่ใช่การยืนยันว่าแต่ละ Phase ผ่าน Production Acceptance
+
+### Workstream status
+
+| Workstream | สถานะ ณ 2026-11-10 |
+|---|---|
+| Foundation / Workspace / RBAC | Implemented with remaining production gaps; ต้องทำ full role-grant reconciliation และ production security gates |
+| Store / Branch / Warehouse | Core management implemented: list/create/detail/edit, default/archive lifecycle และ service/HTTP tests |
+| Product Catalog | Core Product management implemented: list/detail/create/edit/archive, SKU/Barcode lookup และ Manager/Cashier E2E; Categories, images, multi-UOM pricing และ Public Store ยังไม่ครบ |
+| Inventory | Receive, Issue, Adjustment, Transfer, Movement History และ Stocktake API/UI พร้อม E2E; RBAC/idempotency/concurrency hardening ผ่าน |
+| POS / Order / Payment | ยังไม่ครบ workflow; Phases 3–4 ยังเป็นงานถัดไปหลัง Catalog/Inventory acceptance |
+| Public Store / Guest Checkout | ยังไม่ implement; Phases 1 Public Store และ 5 Checkout ยังไม่ผ่าน |
+| Backup / Recovery | Local backup/restore rehearsal ผ่าน; encrypted off-host backup/restore ยังเป็น gate เปิดอยู่ |
+
+### Inventory scope ที่เสร็จแล้ว แต่ยังไม่เท่ากับ Phase 2 complete
+
+- Reservation lifecycle/concurrency tests, Receive/Issue/Adjustment/Transfer และ Movement History มี implementation และ tests
+- Stocktake API/UI ผ่านบน E2E Tenant ที่มี Stocktake schema migration
+- Transfer เป็น atomic paired movement ไม่ใช่ workflow ส่ง/รับแบบสองขั้นตาม checklist เดิม
+- Opening Stock ต่อ Warehouse ยังไม่ถือว่าเสร็จ; Stocktake ไม่ใช่ตัวแทน Opening Stock
+- ยังไม่มี Sales/Order integration จึงยังไม่ถือว่า Cost Snapshot ณ เวลาขายหรือ concurrent sale ผ่าน
+- `pos-local` มี StockBalance/InventoryCost/StockMovement เป็น 0 แถว จึงยังรับรอง WAC/Inventory Value จากธุรกรรมจริงไม่ได้
+
+### pos-local Readiness findings — 2026-11-10
+
+- Store/Branch/Warehouse เริ่มต้น Active และ Default ถูกต้อง; Store ยังไม่ Published
+- มี Owner และ Manager membership; ยังไม่มีผู้ใช้ที่ได้รับมอบหมาย Admin, Cashier หรือ Inventory Staff
+- Admin permission grants ยังไม่ตรงกับ Default Role Matrix; ต้อง reconcile ทุก Permission Catalog key ไม่ใช่ Apply migration candidate 005 แล้วสันนิษฐานว่าครบ
+- `stocktake_sessions` / `stocktake_lines` ยังไม่มีใน `pos-local`; `GET /inventory/stocktakes` ตอบ HTTP 500 จาก schema gap
+- Local Backup/Restore ผ่าน แต่ encrypted off-host Backup/Restore ยังเป็น deployment blocker
+- ผลตรวจเป็น Read-only; ไม่มีการเปลี่ยน Role, Business data, Tenant/Control schema หรือ Migration Ledger
+
+รายละเอียด Findings และ Remediation Plan อยู่ใน `docs/operations/inventory-operational-readiness-remediation-plan-2026-11-10.md`.
+
+### ลำดับงานถัดไปที่มีผลบังคับใช้
+
+ลำดับนี้ supersede Next Steps เดิมวันที่ 2026-11-05 สำหรับช่วง Inventory Operational Readiness:
+
+1. **R1 — Full RBAC reconciliation (Read-only):** เทียบ Permission Catalog, Control DB permission rows, role_permissions และ Role existence กับ `workspace-permission-matrix.md`.
+2. **R2 — RBAC remediation candidate:** จัดทำ forward-only SQL/test plan จาก diff ที่พิสูจน์แล้ว; ห้าม Apply หรือเปลี่ยน membership assignment โดยไม่มีอนุมัติ
+3. **R3 — Stocktake migration review:** ตรวจ candidate SQL, Prisma schema, migration runner และ API compatibility; ห้าม Apply กับ `pos-local` ในขั้นนี้
+4. **R4 — Backup/deployment preflight:** ต้องมี encrypted off-host backup + restore verification, maintenance window และ rollback plan ก่อนการเปลี่ยน Tenant จริง
+5. หลังจากนั้นจึงขออนุมัติแยกสำหรับ Control DB RBAC changes, Tenant Stocktake migration และ Opening Inventory data
+
+### วิธีรายงานความคืบหน้า
+
+- ค่า 30.1% ใน Progress update 2026-11-05 เป็น raw checkbox count ณ วันนั้นและล้าสมัยแล้ว
+- ห้ามอ้างตัวเลขดังกล่าวเป็นความคืบหน้าปัจจุบัน; หลาย checklist items เป็น composite scope และ Implementation ล่าสุดยังไม่ได้ reconcile กลับทุก checkbox
+- ใช้ Workstream status และ Readiness gates ด้านบนจนกว่าจะทำ checklist mapping/deduplication ครบถ้วน
+
+งาน reconciliation นี้ไม่มี Migration, Production deployment, commit หรือ push.
+
+
+## R1 — Full RBAC reconciliation result — 2026-11-10 (Read-only)
+
+- [x] เทียบ Application Permission Catalog 30 keys กับ Control DB permission rows: พบ 31 rows เพราะมี legacy `commerce.inventory.manage` เพิ่มอีก 1 key
+- [x] เทียบ Role grants: Admin expected 30 / actual 12 (missing 19, unexpected legacy 1); Manager expected 27 / actual 27 (exact match)
+- [x] ตรวจ Role rows: มี admin/manager/member/viewer; ไม่มี cashier และ inventory_staff
+- [x] ตรวจ Membership: Owner 1 (ownership bypass) และ Manager 1; ไม่มี Cashier/Inventory Staff assignment
+- [x] ตรวจ Migration ledger: 001/002 applied; 003/004 ไม่มี ledger row แต่มี schema effects ที่เคยตรวจพบ; 005 ยังไม่ applied
+- [x] ยืนยันว่า migration candidate 005 ไม่เพียงพอ: Manager มี 3 inventory grants อยู่แล้ว; Admin ยังขาด 16 grants หลังเพิ่ม 3 keys; Inventory Staff role ยังไม่มี
+- [x] พบว่า `WorkspacesService.listRoles()` เรียก `ensureDefaultRoles()` ซึ่งทำ database writes จาก read/list path; ห้ามใช้ endpoint นี้ใน Read-only audit จนกว่าจะแยก provisioning ออกจาก GET path
+- R1 เสร็จแบบ Read-only; ไม่มี database mutation หรือ Role assignment
+- R2 ต้องเตรียม migration/role provisioning strategy ใหม่ และทำ Control migration ledger reconciliation ก่อน ห้ามใช้ `prisma migrate deploy` แบบเหมารวม หรือสร้าง migration ledger rows ย้อนหลัง
+- รายละเอียด: `docs/operations/inventory-operational-readiness-remediation-plan-2026-11-10.md`
+
+
+## R2 status - 2026-11-10
+
+- Read-only reconciliation confirms Migration 003 schema effects and Migration 004 runtime grants are present and match current SQL, but neither has a Control Prisma ledger row.
+- Migration 005 remains unapplied and on hold; it is not a complete RBAC remediation.
+- Do not rerun 003/004, run prisma migrate deploy, or insert historical ledger rows.
+- The owner must decide whether to explicitly authorize Prisma migrate resolve --applied for exactly 003/004 after review, or retain the no-backfill rule and approve a separate migration-lineage/runner redesign. No option has been executed.
+- Detailed evidence and disposition are appended to docs/operations/inventory-operational-readiness-remediation-plan-2026-11-10.md.
+- Drafted the pos-local RBAC remediation design (Admin 30, Manager 27 unchanged, Cashier 7 role provisioned without membership assignment, Inventory Staff remains on-demand/13, Member/Viewer untouched); it is documented but not an executable or approved migration.
+- Candidate design requires read-only preflight, additive idempotent grants, no membership changes, preservation of legacy commerce.inventory.manage, and a separate fix/test for listRoles GET-side effects.
+
+- R2 rehearsal PASS (2026-11-10): Prisma migrate resolve --applied for exactly Control migrations 003/004 succeeded on a disposable restore; checksums matched and migrate status left 005 as the only pending migration. Live Control DB remains untouched pending explicit approval.
+- RBAC candidate rehearsal PASS on a separate disposable restore: Admin 30 catalog grants plus preserved legacy grant; Manager unchanged at 27; Cashier created with 7 grants; Inventory Staff remains on-demand; memberships, other workspaces, permission catalog and migration ledger unchanged; second run idempotent.
+- Evidence: docs/operations/r2-migration-rbac-rehearsal-2026-11-10.md. Candidate SQL is docs/operations/pos-local-rbac-remediation-candidate-2026-11-10.sql and is not an active migration.
+- Approval gates remain separate: live Control ledger resolution for 003/004; RBAC candidate application to pos-local. Migration 005 and Stocktake remain on hold.
+- Stocktake candidate SQL rehearsal PASS on a disposable restore of the pinned pos-local Tenant backup. Verified two tables, 12/9 columns, enum values, seven named constraints, six indexes, empty tables and unchanged Tenant ledger. Live pos-local read-only audit confirms runtime default CRUD grants; TenantMigrationRunner currently applies only baseline, so a dedicated approved incremental executor is still required. No live DB change. See docs/operations/r2-migration-rbac-rehearsal-2026-11-10.md.
+
+
+## Checkpoint — 2026-11-10: pos-local Stocktake migration and UI verification
+
+### Completed
+- Applied `20261107000100_tenant_inventory_stocktake` to the `pos-local` Tenant database `syncup_ws_c0130bf3c1c0` after explicit approval. The migration SQL and Tenant ledger insert were committed atomically by the guarded incremental migration executor.
+- Created and verified a pre-migration custom-format backup at `D:\Back up\SyncUp\Backups\pos-local_pre_stocktake_20261110044830.dump`; SHA256 `b78890368bf2014664c38bb1e817d84f6716f0f8768d37b56010db6ebbe0ac40`. Backup is local and not encrypted; off-host encrypted backup remains an outstanding operational task.
+- Post-migration read-only verification PASS: 2 Stocktake tables, expected columns/enums/constraints/indexes, empty initial tables, 3 Tenant migration ledger entries, and runtime CRUD grants limited to Stocktake tables. Runtime role cannot insert into migration ledger.
+- API typecheck/build PASS. `pos-local` Manager HTTP inventory/Stocktake E2E PASS, including idempotency, validation, stale snapshot guard, WAC, transfer concurrency and fixture cleanup.
+- Browser UI E2E PASS (1/1) using the `pos-local` Manager login. This test stubs Stocktake API responses and verifies the UI flow; the separate Manager HTTP E2E above exercises the real API/database.
+- Added `apps/web/e2e/pos-local-stocktake-ui.spec.ts` and operational executor, rehearsal, backup and verification scripts/reports under `apps/api/scripts/` and `docs/operations/`.
+- `pos-local` RBAC remediation is applied and verified: Admin has all 30 catalog grants plus preserved legacy grant; Manager unchanged; Cashier role has 7 grants; Inventory Staff remains provisioned on demand.
+
+### Current safeguards and remaining work
+- No deployment, commit or push was performed as part of the database migration/UI verification.
+- Control DB migration ledger resolution for Control migrations 003/004 was approved in a separate step but has not been executed; do not claim it is reconciled. Control migration 005 remains unreconciled and must not be deployed as-is.
+- Opening Stock per Warehouse is not implemented. Do not treat Stocktake as an Opening Stock workflow.
+- Off-host encrypted backup and key-recovery design remain open. The existing local backup is not encrypted.
+- Preserve the distinction between `e2e-commerce-20261106` and production-like `pos-local`; do not reuse E2E fixtures against production data.
+
+### Recommended next implementation
+1. Implement Opening Stock per Warehouse with auditable opening movements and safe idempotency/concurrency behavior.
+2. Add real-browser UI/API integration coverage for Stocktake against `pos-local` only when a controlled test fixture and cleanup plan are in place.
+3. Resolve the Control migration ledger state only within the exact previously approved 003/004 scope; review migration 005 separately.
+4. Complete encrypted off-host backup and restore/key-recovery verification before treating backup readiness as production-grade.

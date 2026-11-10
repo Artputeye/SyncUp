@@ -1,20 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../database/prisma.service";
 import { WorkspaceProvisioningService } from "../../database/workspace-provisioning.service";
+import { DEFAULT_WORKSPACE_ROLES, WORKSPACE_PERMISSIONS } from "../rbac/permission-catalog";
 
-const PERMISSIONS = [
-  { key: "workspace.view", description: "ดูข้อมูล Workspace" },
-  { key: "workspace.manage", description: "จัดการการตั้งค่า Workspace" },
-  { key: "members.view", description: "ดูรายชื่อสมาชิก" },
-  { key: "members.manage", description: "เพิ่ม แก้ไข และนำสมาชิกออก" },
-  { key: "roles.manage", description: "กำหนดสิทธิ์ของบทบาท" },
-  { key: "modules.manage", description: "จัดการโมดูลของ Workspace" }
-] as const;
-const DEFAULT_ROLES = [
-  { key: "admin", name: "ผู้ดูแลระบบ", permissions: PERMISSIONS.map(p => p.key) },
-  { key: "member", name: "สมาชิก", permissions: ["workspace.view", "members.view"] },
-  { key: "viewer", name: "ผู้ดูอย่างเดียว", permissions: ["workspace.view", "members.view"] }
-] as const;
+
 
 @Injectable()
 export class WorkspacesService {
@@ -22,25 +11,39 @@ export class WorkspacesService {
 
   async listForUser(userId: string) {
     const memberships = await this.db.membership.findMany({
-      where: { userId },
-      include: { workspace: { select: { id: true, slug: true, name: true, status: true, createdAt: true } } },
+      where: { userId, workspace: { slug: { not: "test" } } },
+      include: { workspace: { select: { id: true, slug: true, name: true, status: true, createdAt: true } }, roles: { include: { role: { select: { key: true } } } } },
       orderBy: { createdAt: "asc" }
     });
-    return memberships.map(({ workspace, isOwner }) => ({ ...workspace, isOwner }));
+    return memberships.map(({ workspace, isOwner, roles }) => ({ ...workspace, isOwner, roles: roles.map(({ role }) => ({ key: role.key })) }));
   }
 
   async create(input: { slug: string; name: string; ownerUserId: string }) {
     const workspace = await this.db.workspace.create({
       data: { slug: input.slug.toLowerCase(), name: input.name, memberships: { create: { userId: input.ownerUserId, isOwner: true } } }
     });
-    const provisioned = await this.provisioning.provision(workspace.id);
-    await this.ensureDefaultRoles(workspace.id);
-    return provisioned;
+
+    try {
+      // Bootstrap control-plane roles before provisioning can mark the Workspace ACTIVE.
+      // This keeps a partially initialized Workspace from becoming available to users.
+      await this.ensureDefaultRoles(workspace.id);
+      return await this.provisioning.provision(workspace.id);
+    } catch (error) {
+      // Provisioning marks its own failures FAILED; this also covers a role-bootstrap failure
+      // that occurs before the provisioning service is entered.
+      await this.db.workspace.updateMany({
+        where: { id: workspace.id, status: "PROVISIONING" },
+        data: { status: "FAILED" }
+      });
+      throw error;
+    }
   }
 
-  private async ensureDefaultRoles(workspaceId: string) {
-    await this.db.permission.createMany({ data: PERMISSIONS.map(p => ({ ...p })), skipDuplicates: true });
-    for (const definition of DEFAULT_ROLES) {
+  private async ensureDefaultRoles(workspaceId: string, includeInventoryStaff = false) {
+    await this.db.permission.createMany({ data: WORKSPACE_PERMISSIONS.map(permission => ({ ...permission })), skipDuplicates: true });
+    for (const definition of DEFAULT_WORKSPACE_ROLES) {
+      // Inventory Staff is created only when an authorized assignment requests it.
+      if (definition.key === "inventory_staff" && !includeInventoryStaff) continue;
       let role = await this.db.role.findFirst({ where: { workspaceId, key: definition.key } });
       if (!role) role = await this.db.role.create({ data: { workspaceId, key: definition.key, name: definition.name, isSystem: true } });
       const permissions = await this.db.permission.findMany({ where: { key: { in: [...definition.permissions] } }, select: { id: true } });
@@ -51,9 +54,12 @@ export class WorkspacesService {
   private async membershipFor(userId: string, workspaceId: string) {
     const membership = await this.db.membership.findUnique({
       where: { userId_workspaceId: { userId, workspaceId } },
-      include: { roles: { include: { role: true } } }
+      include: { workspace: { select: { status: true } }, roles: { include: { role: true } } }
     });
     if (!membership) throw new ForbiddenException("คุณไม่ได้เป็นสมาชิกของ Workspace นี้");
+    if (membership.workspace.status !== "ACTIVE") {
+      throw new ForbiddenException("Workspace นี้ไม่ได้อยู่ในสถานะ ACTIVE");
+    }
     return membership;
   }
 
@@ -91,16 +97,25 @@ export class WorkspacesService {
   }
 
   async addMember(actorId: string, workspaceId: string, email: string, roleKey: string) {
-    await this.assertPermission(actorId, workspaceId, "members.manage");
-    await this.ensureDefaultRoles(workspaceId);
+    const actorMembership = await this.assertPermission(actorId, workspaceId, "members.manage");
+
     if (!email?.trim()) throw new BadRequestException("กรุณาระบุอีเมลสมาชิก");
+    if (!DEFAULT_WORKSPACE_ROLES.some(definition => definition.key === roleKey)) {
+      throw new BadRequestException("ไม่พบบทบาทที่เลือก");
+    }
+    if (roleKey === "admin" && !actorMembership.isOwner) {
+      throw new ForbiddenException("เฉพาะเจ้าของ Workspace เท่านั้นที่เพิ่มผู้ดูแลระบบได้");
+    }
+
     const user = await this.db.user.findUnique({ where: { email: email.trim().toLowerCase() } });
     if (!user || user.status !== "ACTIVE") throw new NotFoundException("ไม่พบบัญชีผู้ใช้นี้ กรุณาให้สมาชิกสมัครบัญชีก่อน");
-    const role = await this.db.role.findFirst({ where: { key: roleKey, workspaceId } });
-    if (!role) throw new BadRequestException("ไม่พบบทบาทที่เลือก");
-    if (role.key === "admin" && !(await this.membershipFor(actorId, workspaceId)).isOwner) throw new ForbiddenException("เฉพาะเจ้าของ Workspace เท่านั้นที่เพิ่มผู้ดูแลระบบได้");
     const exists = await this.db.membership.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId } } });
     if (exists) throw new ConflictException("ผู้ใช้นี้เป็นสมาชิก Workspace อยู่แล้ว");
+
+    // Provision Inventory Staff only after authorization and target-member validation succeed.
+    await this.ensureDefaultRoles(workspaceId, roleKey === "inventory_staff");
+    const role = await this.db.role.findFirst({ where: { key: roleKey, workspaceId } });
+    if (!role) throw new BadRequestException("ไม่พบบทบาทที่เลือก");
     const member = await this.db.membership.create({ data: { userId: user.id, workspaceId, roles: { create: { roleId: role.id } } } });
     return { id: member.id, email: user.email, displayName: user.displayName, role: { key: role.key, name: role.name } };
   }

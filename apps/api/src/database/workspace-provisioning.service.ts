@@ -41,9 +41,18 @@ export class WorkspaceProvisioningService {
 
       const existingRole = await admin.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [runtimeRole]);
       if (existingRole.rowCount === 0) {
-        await admin.query(`CREATE ROLE ${quoteIdentifier(runtimeRole)} LOGIN PASSWORD ${quoteLiteral(runtimePassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+        await admin.query(`CREATE ROLE ${quoteIdentifier(runtimeRole)} LOGIN PASSWORD ${quoteLiteral(runtimePassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`);
       } else {
-        await admin.query(`ALTER ROLE ${quoteIdentifier(runtimeRole)} WITH LOGIN PASSWORD ${quoteLiteral(runtimePassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+        await admin.query(`ALTER ROLE ${quoteIdentifier(runtimeRole)} WITH LOGIN PASSWORD ${quoteLiteral(runtimePassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`);
+      }
+
+      // Runtime roles must not inherit privileges from any other PostgreSQL role.
+      const memberships = await admin.query(
+        "SELECT parent.rolname FROM pg_auth_members membership JOIN pg_roles parent ON parent.oid = membership.roleid JOIN pg_roles member ON member.oid = membership.member WHERE member.rolname = $1",
+        [runtimeRole]
+      );
+      for (const membership of memberships.rows) {
+        await admin.query(`REVOKE ${quoteIdentifier(membership.rolname)} FROM ${quoteIdentifier(runtimeRole)}`);
       }
 
       const parsed = new URL(adminUrl);
@@ -61,7 +70,9 @@ export class WorkspaceProvisioningService {
         }
       });
     } catch (error) {
-      await this.controlDb.workspace.update({ where: { id: workspaceId }, data: { status: "FAILED" } });
+      if (workspace.status === "PROVISIONING") {
+        await this.controlDb.workspace.update({ where: { id: workspaceId }, data: { status: "FAILED" } });
+      }
       throw error;
     } finally {
       await admin.end().catch(() => undefined);
@@ -80,7 +91,9 @@ export class WorkspaceProvisioningService {
       this.logger.log(`Workspace ${workspaceId} provisioned with isolated database role`);
       return { workspaceId, databaseName, schemaVersion, status: "ACTIVE" as const };
     } catch (error) {
-      await this.controlDb.workspace.update({ where: { id: workspaceId }, data: { status: "FAILED" } });
+      if (workspace.status === "PROVISIONING") {
+        await this.controlDb.workspace.update({ where: { id: workspaceId }, data: { status: "FAILED" } });
+      }
       this.logger.error(`Workspace provisioning failed for ${workspaceId}`, error);
       throw error;
     }

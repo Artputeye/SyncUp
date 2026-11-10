@@ -1,1 +1,30 @@
-{"name":"@syncup/web","version":"0.1.0","private":true,"scripts":{"dev":"next dev --port 3000","build":"next build","start":"next start --port 3000","lint":"eslint .","typecheck":"tsc --noEmit"},"dependencies":{"next":"^16.0.0","react":"^19.2.0","react-dom":"^19.2.0"},"devDependencies":{"@types/node":"^24.0.0","@types/react":"^19.2.0","@types/react-dom":"^19.2.0","eslint":"^9.0.0","eslint-config-next":"^16.0.0","typescript":"^5.9.2"}}
+{
+  "name": "@syncup/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:commerce-smoke": "node --env-file=../api/.env e2e/run-e2e-commerce-smoke.cjs",
+    "test:e2e:products": "playwright test e2e/product-management.spec.ts --project=chromium"
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "typescript": "^5.9.2"
+  }
+}

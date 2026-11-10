@@ -9,3 +9,12 @@ coverage
 !.env.example
 *.log
 .DS_Store
+*.tsbuildinfo
+apps/api/data/
+apps/api/generated/
+apps/web/playwright-report/
+apps/web/test-results/
+apps/api/member.user.id
+apps/api/role.key
+/({
+/Branch

@@ -19,30 +19,37 @@ enum UserStatus {
   DISABLED
 }
 
+enum ModuleInstallationStatus {
+  INSTALLED
+  ENABLED
+  DISABLED
+  FAILED
+}
+
 model User {
-  id             String       @id @default(uuid()) @db.Uuid
-  email          String       @unique @db.VarChar(320)
-  passwordHash   String       @map("password_hash")
-  displayName    String       @map("display_name") @db.VarChar(160)
-  status         UserStatus   @default(ACTIVE)
-  isPlatformAdmin Boolean     @default(false) @map("is_platform_admin")
-  memberships    Membership[]
-  sessions       Session[]
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  id              String       @id @default(uuid()) @db.Uuid
+  email           String       @unique @db.VarChar(320)
+  passwordHash    String       @map("password_hash")
+  displayName     String       @map("display_name") @db.VarChar(160)
+  status          UserStatus   @default(ACTIVE)
+  isPlatformAdmin Boolean      @default(false) @map("is_platform_admin")
+  memberships     Membership[]
+  sessions        Session[]
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
   @@map("users")
 }
 
 model Workspace {
-  id          String              @id @default(uuid()) @db.Uuid
-  slug        String              @unique @db.VarChar(48)
-  name        String              @db.VarChar(160)
-  status      WorkspaceStatus     @default(PROVISIONING)
+  id          String             @id @default(uuid()) @db.Uuid
+  slug        String             @unique @db.VarChar(48)
+  name        String             @db.VarChar(160)
+  status      WorkspaceStatus    @default(PROVISIONING)
   database    WorkspaceDatabase?
   memberships Membership[]
-  createdAt   DateTime            @default(now()) @map("created_at")
-  updatedAt   DateTime            @updatedAt @map("updated_at")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
 
   @@map("workspaces")
 }
@@ -64,14 +71,14 @@ model WorkspaceDatabase {
 }
 
 model Membership {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  workspaceId String   @map("workspace_id") @db.Uuid
-  isOwner     Boolean  @default(false) @map("is_owner")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  workspaceId String           @map("workspace_id") @db.Uuid
+  isOwner     Boolean          @default(false) @map("is_owner")
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   roles       MembershipRole[]
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
 
   @@unique([userId, workspaceId])
   @@index([workspaceId])
@@ -79,15 +86,15 @@ model Membership {
 }
 
 model Session {
-  id            String    @id @default(uuid()) @db.Uuid
-  userId        String    @map("user_id") @db.Uuid
-  tokenHash     String    @unique @map("token_hash") @db.VarChar(64)
-  expiresAt     DateTime  @map("expires_at")
-  revokedAt     DateTime? @map("revoked_at")
-  userAgent     String?   @map("user_agent") @db.VarChar(512)
-  ipAddress     String?   @map("ip_address") @db.VarChar(64)
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt     DateTime  @default(now()) @map("created_at")
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  userAgent String?   @map("user_agent") @db.VarChar(512)
+  ipAddress String?   @map("ip_address") @db.VarChar(64)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now()) @map("created_at")
 
   @@index([userId, expiresAt])
   @@map("sessions")
@@ -136,14 +143,36 @@ model MembershipRole {
 }
 
 model ModuleInstallation {
-  id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String   @map("workspace_id") @db.Uuid
-  moduleId    String   @map("module_id") @db.VarChar(120)
-  version     String   @db.VarChar(40)
-  enabled     Boolean  @default(false)
-  source      String   @default("bundled") @db.VarChar(20)
-  installedAt DateTime @default(now()) @map("installed_at")
+  id          String                   @id @default(uuid()) @db.Uuid
+  workspaceId String                   @map("workspace_id") @db.Uuid
+  moduleId    String                   @map("module_id") @db.VarChar(120)
+  version     String                   @db.VarChar(40)
+  enabled     Boolean                  @default(false)
+  status      ModuleInstallationStatus @default(INSTALLED)
+  source      String                   @default("bundled") @db.VarChar(20)
+  installedBy String?                  @map("installed_by") @db.Uuid
+  installedAt DateTime                 @default(now()) @map("installed_at")
+  enabledAt   DateTime?                @map("enabled_at")
+  disabledAt  DateTime?                @map("disabled_at")
+  lastError   String?                  @map("last_error") @db.Text
+  updatedAt   DateTime                 @updatedAt @map("updated_at")
 
   @@unique([workspaceId, moduleId])
+  @@index([workspaceId, status])
   @@map("module_installations")
+}
+
+model PlatformAuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  actorUserId String   @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(120)
+  entityType  String   @map("entity_type") @db.VarChar(120)
+  entityId    String   @map("entity_id") @db.VarChar(120)
+  metadata    Json     @default("{}") @db.JsonB
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  @@index([workspaceId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@map("platform_audit_logs")
 }

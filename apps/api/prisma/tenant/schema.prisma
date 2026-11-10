@@ -94,8 +94,6 @@ enum StockMovementType {
   RECEIVING
   SALE
   SALE_RETURN
-  RESERVATION
-  RESERVATION_RELEASE
   ADJUSTMENT_IN
   ADJUSTMENT_OUT
   TRANSFER_IN
@@ -111,8 +109,8 @@ enum StockReferenceType {
   RETURN
   ADJUSTMENT
   TRANSFER
-  RESERVATION
   MANUAL
+  STOCKTAKE
 }
 
 enum StockAdjustmentStatus {
@@ -163,7 +161,8 @@ enum TaxRoundingMethod {
 model Store {
   id            String          @id @default(uuid()) @db.Uuid
   name          String          @db.VarChar(160)
-  slug          String          @unique @db.VarChar(80)
+  slug          String          @db.VarChar(80)
+  normalizedSlug String          @unique @map("normalized_slug") @db.VarChar(80)
   storeType     StoreType       @default(OMNICHANNEL) @map("store_type")
   status        RecordStatus    @default(ACTIVE)
   description   String?         @db.Text
@@ -179,8 +178,8 @@ model Store {
   storeProducts StoreProduct[]
   taxProfiles   TaxProfile[]
   auditLogs     AuditLog[]
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)        @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)        @updatedAt @map("updated_at")
 
   @@index([status, isPublished])
   @@map("stores")
@@ -197,8 +196,8 @@ model Branch {
   phone      String?      @db.VarChar(40)
   store      Store        @relation("StoreBranches", fields: [storeId], references: [id], onDelete: Restrict)
   warehouses Warehouse[]
-  createdAt  DateTime     @default(now()) @map("created_at")
-  updatedAt  DateTime     @updatedAt @map("updated_at")
+  createdAt  DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
+  updatedAt  DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
 
   @@unique([storeId, code])
   @@unique([storeId, id])
@@ -221,8 +220,9 @@ model Warehouse {
   openingSessions    OpeningStockSession[]
   receivingDocuments DirectReceiving[]
   adjustmentBatches  StockAdjustmentImportBatch[]
-  createdAt          DateTime                     @default(now()) @map("created_at")
-  updatedAt          DateTime                     @updatedAt @map("updated_at")
+  stocktakeSessions  StocktakeSession[]
+  createdAt          DateTime @db.Timestamptz(3)                     @default(now()) @map("created_at")
+  updatedAt          DateTime @db.Timestamptz(3)                     @updatedAt @map("updated_at")
 
   @@unique([branchId, code])
   @@unique([branchId, id])
@@ -242,8 +242,8 @@ model UnitOfMeasure {
   isSystem       Boolean          @default(false) @map("is_system")
   baseVariants   ProductVariant[] @relation("VariantBaseUom")
   variantUoms    VariantUom[]
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
 
   @@index([dimension, status])
   @@map("unit_of_measures")
@@ -258,9 +258,9 @@ model Product {
   variants       ProductVariant[]
   storeProducts  StoreProduct[]
   images         ProductImage[]
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
-  archivedAt     DateTime?        @map("archived_at")
+  createdAt      DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
+  archivedAt     DateTime? @db.Timestamptz(3)        @map("archived_at")
 
   @@index([status, name])
   @@index([normalizedName])
@@ -281,6 +281,7 @@ model ProductVariant {
   baseUom        UnitOfMeasure              @relation("VariantBaseUom", fields: [baseUomId], references: [id], onDelete: Restrict)
   variantUoms    VariantUom[]
   barcodes       VariantBarcode[]
+  qrCodes        VariantQRCode[]
   storeVariants  StoreProductVariant[]
   images         VariantImage[]
   balances       StockBalance[]
@@ -290,9 +291,10 @@ model ProductVariant {
   openingItems   OpeningStockItem[]
   receivingItems DirectReceivingItem[]
   adjustmentRows StockAdjustmentImportRow[]
-  createdAt      DateTime                   @default(now()) @map("created_at")
-  updatedAt      DateTime                   @updatedAt @map("updated_at")
-  archivedAt     DateTime?                  @map("archived_at")
+  stocktakeLines StocktakeLine[]
+  createdAt      DateTime @db.Timestamptz(3)                   @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)                   @updatedAt @map("updated_at")
+  archivedAt     DateTime? @db.Timestamptz(3)                  @map("archived_at")
 
   @@unique([productId, id])
   @@index([productId, status])
@@ -310,8 +312,8 @@ model VariantUom {
   variant          ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
   uom              UnitOfMeasure  @relation(fields: [uomId], references: [id], onDelete: Restrict)
   prices           ProductPrice[]
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
+  createdAt        DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
 
   @@unique([variantId, uomId])
   @@unique([variantId, id])
@@ -326,10 +328,23 @@ model VariantBarcode {
   normalized String         @unique @db.VarChar(128)
   symbology  String         @default("EAN13") @db.VarChar(24)
   variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  createdAt  DateTime       @default(now()) @map("created_at")
+  createdAt  DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
 
   @@index([variantId])
   @@map("variant_barcodes")
+}
+
+model VariantQRCode {
+  id          String          @id @default(uuid()) @db.Uuid
+  variantId   String          @map("variant_id") @db.Uuid
+  payload     String          @db.Text
+  payloadHash String          @unique @map("payload_hash") @db.Char(64)
+  symbology   String          @default("QR_CODE") @db.VarChar(24)
+  variant     ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt   DateTime        @db.Timestamptz(3) @default(now()) @map("created_at")
+
+  @@index([variantId])
+  @@map("variant_qr_codes")
 }
 
 model StoreProduct {
@@ -343,9 +358,9 @@ model StoreProduct {
   product       Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
   categories    StoreProductCategory[]
   variants      StoreProductVariant[]
-  createdAt     DateTime               @default(now()) @map("created_at")
-  updatedAt     DateTime               @updatedAt @map("updated_at")
-  archivedAt    DateTime?              @map("archived_at")
+  createdAt     DateTime @db.Timestamptz(3)               @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)               @updatedAt @map("updated_at")
+  archivedAt    DateTime? @db.Timestamptz(3)              @map("archived_at")
 
   @@unique([storeId, productId])
   @@unique([storeId, id])
@@ -365,8 +380,8 @@ model StoreProductVariant {
   storeProduct   StoreProduct       @relation(fields: [storeId, storeProductId, productId], references: [storeId, id, productId], onDelete: Restrict)
   variant        ProductVariant     @relation(fields: [productId, variantId], references: [productId, id], onDelete: Restrict)
   prices         ProductPrice[]
-  createdAt      DateTime           @default(now()) @map("created_at")
-  updatedAt      DateTime           @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
 
   @@unique([storeProductId, variantId])
   @@unique([storeProductId, id])
@@ -389,8 +404,8 @@ model StoreCategory {
   parent         StoreCategory?         @relation("CategoryTree", fields: [storeId, parentId], references: [storeId, id], onDelete: Restrict)
   children       StoreCategory[]        @relation("CategoryTree")
   products       StoreProductCategory[]
-  createdAt      DateTime               @default(now()) @map("created_at")
-  updatedAt      DateTime               @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)               @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)               @updatedAt @map("updated_at")
 
   @@unique([storeId, normalizedSlug])
   @@unique([storeId, id])
@@ -404,7 +419,7 @@ model StoreProductCategory {
   categoryId     String        @map("category_id") @db.Uuid
   storeProduct   StoreProduct  @relation(fields: [storeId, storeProductId], references: [storeId, id], onDelete: Restrict)
   category       StoreCategory @relation(fields: [storeId, categoryId], references: [storeId, id], onDelete: Restrict)
-  createdAt      DateTime      @default(now()) @map("created_at")
+  createdAt      DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
 
   @@id([storeId, storeProductId, categoryId])
   @@index([storeId, categoryId])
@@ -418,11 +433,11 @@ model ProductPrice {
   variantUomId          String              @map("variant_uom_id") @db.Uuid
   amount                Decimal             @db.Decimal(20, 4)
   currency              String              @default("THB") @db.Char(3)
-  validFrom             DateTime            @default(now()) @map("valid_from")
-  validTo               DateTime?           @map("valid_to")
+  validFrom             DateTime @db.Timestamptz(3)            @default(now()) @map("valid_from")
+  validTo               DateTime? @db.Timestamptz(3)           @map("valid_to")
   storeProductVariant   StoreProductVariant @relation(fields: [storeProductVariantId, variantId], references: [id, variantId], onDelete: Restrict)
   variantUom            VariantUom          @relation(fields: [variantId, variantUomId], references: [variantId, id], onDelete: Restrict)
-  createdAt             DateTime            @default(now()) @map("created_at")
+  createdAt             DateTime @db.Timestamptz(3)            @default(now()) @map("created_at")
   createdBy              String?             @map("created_by") @db.Uuid
 
   @@index([storeProductVariantId, variantUomId, currency, validFrom])
@@ -435,9 +450,9 @@ model MediaAsset {
   status           MediaStatus               @default(STAGED)
   altText          String?                   @map("alt_text") @db.VarChar(255)
   uploadedBy       String?                   @map("uploaded_by") @db.Uuid
-  verifiedAt       DateTime?                 @map("verified_at")
-  createdAt        DateTime                  @default(now()) @map("created_at")
-  updatedAt        DateTime                  @updatedAt @map("updated_at")
+  verifiedAt       DateTime? @db.Timestamptz(3)                 @map("verified_at")
+  createdAt        DateTime @db.Timestamptz(3)                  @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)                  @updatedAt @map("updated_at")
   derivatives      MediaAssetDerivative[]
   productImages    ProductImage[]
   variantImages    VariantImage[]
@@ -462,8 +477,8 @@ model MediaAssetDerivative {
   checksumSha256   String                @map("checksum_sha256") @db.Char(64)
   width            Int
   height           Int
-  createdAt        DateTime              @default(now()) @map("created_at")
-  updatedAt        DateTime              @updatedAt @map("updated_at")
+  createdAt        DateTime @db.Timestamptz(3)              @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)              @updatedAt @map("updated_at")
   mediaAsset       MediaAsset            @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
 
   @@unique([mediaAssetId, kind])
@@ -478,7 +493,7 @@ model ProductImage {
   sortOrder    Int        @default(0) @map("sort_order")
   product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
   mediaAsset   MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
-  createdAt    DateTime   @default(now()) @map("created_at")
+  createdAt    DateTime @db.Timestamptz(3)   @default(now()) @map("created_at")
 
   @@unique([productId, mediaAssetId])
   @@index([productId, sortOrder])
@@ -493,7 +508,7 @@ model VariantImage {
   sortOrder    Int            @default(0) @map("sort_order")
   variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
   mediaAsset   MediaAsset     @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
-  createdAt    DateTime       @default(now()) @map("created_at")
+  createdAt    DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
 
   @@unique([variantId, mediaAssetId])
   @@index([variantId, sortOrder])
@@ -514,10 +529,10 @@ model ImageImportBatch {
   options          Json?
   errorSummary     Json?             @map("error_summary")
   uploadedBy       String            @map("uploaded_by") @db.Uuid
-  startedAt        DateTime?         @map("started_at")
-  completedAt      DateTime?         @map("completed_at")
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
+  startedAt        DateTime? @db.Timestamptz(3)         @map("started_at")
+  completedAt      DateTime? @db.Timestamptz(3)         @map("completed_at")
+  createdAt        DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
   items            ImageImportItem[]
 
   @@index([status, createdAt])
@@ -543,8 +558,8 @@ model ImageImportItem {
   metadata         Json?
   batch            ImageImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   mediaAsset       MediaAsset?      @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
+  createdAt        DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
 
   @@unique([batchId, relativePath])
   @@index([batchId, status])
@@ -558,7 +573,7 @@ model StockBalance {
   onHand      Decimal        @default(0) @map("on_hand") @db.Decimal(20, 3)
   reserved    Decimal        @default(0) @db.Decimal(20, 3)
   available   Decimal        @default(0) @db.Decimal(20, 3)
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+  updatedAt   DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
   warehouse   Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
 
@@ -581,13 +596,13 @@ model StockMovement {
   reversalOfId   String?            @unique @map("reversal_of_id") @db.Uuid
   reason         String?            @db.VarChar(500)
   actorUserId    String?            @map("actor_user_id") @db.Uuid
-  occurredAt     DateTime           @default(now()) @map("occurred_at")
+  occurredAt     DateTime @db.Timestamptz(3)           @default(now()) @map("occurred_at")
   metadata       Json?
   warehouse      Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   variant        ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Restrict)
   reversalOf     StockMovement?     @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversals      StockMovement[]    @relation("MovementReversal")
-  createdAt      DateTime           @default(now()) @map("created_at")
+  createdAt      DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
 
   @@index([warehouseId, variantId, occurredAt])
   @@index([referenceType, referenceId])
@@ -603,13 +618,13 @@ model StockReservation {
   referenceType  String         @map("reference_type") @db.VarChar(40)
   referenceId    String?        @map("reference_id") @db.Uuid
   idempotencyKey String?        @unique @map("idempotency_key") @db.VarChar(160)
-  expiresAt      DateTime?      @map("expires_at")
-  releasedAt     DateTime?      @map("released_at")
+  expiresAt      DateTime? @db.Timestamptz(3)      @map("expires_at")
+  releasedAt     DateTime? @db.Timestamptz(3)      @map("released_at")
   actorUserId    String?        @map("actor_user_id") @db.Uuid
   warehouse      Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
 
   @@index([warehouseId, variantId, status])
   @@index([status, expiresAt])
@@ -622,7 +637,7 @@ model InventoryCost {
   quantity        Decimal        @default(0) @db.Decimal(20, 3)
   averageUnitCost Decimal        @default(0) @map("average_unit_cost") @db.Decimal(20, 6)
   inventoryValue  Decimal        @default(0) @map("inventory_value") @db.Decimal(24, 6)
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  updatedAt       DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
   warehouse       Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   variant         ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
 
@@ -640,11 +655,11 @@ model OpeningStockSession {
   idempotencyKey    String?            @unique @map("idempotency_key") @db.VarChar(160)
   createdBy         String             @map("created_by") @db.Uuid
   postedBy          String?            @map("posted_by") @db.Uuid
-  postedAt          DateTime?          @map("posted_at")
+  postedAt          DateTime? @db.Timestamptz(3)          @map("posted_at")
   warehouse         Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   items             OpeningStockItem[]
-  createdAt         DateTime           @default(now()) @map("created_at")
-  updatedAt         DateTime           @updatedAt @map("updated_at")
+  createdAt         DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
+  updatedAt         DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
 
   @@index([warehouseId, status])
   @@map("opening_stock_sessions")
@@ -659,11 +674,54 @@ model OpeningStockItem {
   totalCost Decimal             @map("total_cost") @db.Decimal(24, 6)
   session   OpeningStockSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
   variant   ProductVariant      @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  createdAt DateTime            @default(now()) @map("created_at")
+  createdAt DateTime @db.Timestamptz(3)            @default(now()) @map("created_at")
 
   @@unique([sessionId, variantId])
   @@index([variantId])
   @@map("opening_stock_items")
+}
+
+enum StocktakeStatus {
+  DRAFT
+  IN_PROGRESS
+  FINALIZED
+  CANCELLED
+}
+
+model StocktakeSession {
+  id             String          @id @default(uuid()) @db.Uuid
+  warehouseId    String          @map("warehouse_id") @db.Uuid
+  status         StocktakeStatus @default(DRAFT)
+  reference      String?         @db.VarChar(100)
+  notes          String?         @db.VarChar(1000)
+  snapshotAt     DateTime @db.Timestamptz(3) @default(now()) @map("snapshot_at")
+  idempotencyKey String?         @unique @map("idempotency_key") @db.VarChar(160)
+  createdBy      String          @map("created_by") @db.Uuid
+  finalizedBy    String?         @map("finalized_by") @db.Uuid
+  finalizedAt    DateTime? @db.Timestamptz(3) @map("finalized_at")
+  warehouse      Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  lines          StocktakeLine[]
+  createdAt      DateTime @db.Timestamptz(3) @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3) @updatedAt @map("updated_at")
+  @@index([warehouseId, status, createdAt])
+  @@map("stocktake_sessions")
+}
+
+model StocktakeLine {
+  id              String           @id @default(uuid()) @db.Uuid
+  sessionId       String           @map("session_id") @db.Uuid
+  variantId       String           @map("variant_id") @db.Uuid
+  systemQuantity  Decimal          @map("system_quantity") @db.Decimal(20, 3)
+  countedQuantity Decimal?         @map("counted_quantity") @db.Decimal(20, 3)
+  unitCost        Decimal?         @db.Decimal(20, 6) @map("unit_cost")
+  note            String?          @db.VarChar(500)
+  session         StocktakeSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  variant         ProductVariant   @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt       DateTime @db.Timestamptz(3) @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3) @updatedAt @map("updated_at")
+  @@unique([sessionId, variantId])
+  @@index([variantId])
+  @@map("stocktake_lines")
 }
 
 model DirectReceiving {
@@ -672,16 +730,16 @@ model DirectReceiving {
   status            ReceivingStatus       @default(DRAFT)
   documentNumber    String?               @map("document_number") @db.VarChar(100)
   supplierReference String?               @map("supplier_reference") @db.VarChar(160)
-  receivedAt        DateTime              @default(now()) @map("received_at")
+  receivedAt        DateTime @db.Timestamptz(3)              @default(now()) @map("received_at")
   notes             String?               @db.VarChar(1000)
   idempotencyKey    String?               @unique @map("idempotency_key") @db.VarChar(160)
   createdBy         String                @map("created_by") @db.Uuid
   postedBy          String?               @map("posted_by") @db.Uuid
-  postedAt          DateTime?             @map("posted_at")
+  postedAt          DateTime? @db.Timestamptz(3)             @map("posted_at")
   warehouse         Warehouse             @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   items             DirectReceivingItem[]
-  createdAt         DateTime              @default(now()) @map("created_at")
-  updatedAt         DateTime              @updatedAt @map("updated_at")
+  createdAt         DateTime @db.Timestamptz(3)              @default(now()) @map("created_at")
+  updatedAt         DateTime @db.Timestamptz(3)              @updatedAt @map("updated_at")
 
   @@index([warehouseId, status, receivedAt])
   @@map("direct_receivings")
@@ -696,7 +754,7 @@ model DirectReceivingItem {
   totalCost   Decimal         @map("total_cost") @db.Decimal(24, 6)
   receiving   DirectReceiving @relation(fields: [receivingId], references: [id], onDelete: Restrict)
   variant     ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  createdAt   DateTime        @default(now()) @map("created_at")
+  createdAt   DateTime @db.Timestamptz(3)        @default(now()) @map("created_at")
 
   @@unique([receivingId, variantId])
   @@index([variantId])
@@ -710,7 +768,7 @@ model StockAdjustmentImportBatch {
   sourceFilename   String                     @map("source_filename") @db.VarChar(255)
   sourceChecksum   String                     @map("source_checksum") @db.Char(64)
   snapshotChecksum String                     @map("snapshot_checksum") @db.Char(64)
-  snapshotTakenAt  DateTime                   @map("snapshot_taken_at")
+  snapshotTakenAt  DateTime @db.Timestamptz(3)                   @map("snapshot_taken_at")
   templateVersion  String                     @map("template_version") @db.VarChar(32)
   rowCount         Int                        @default(0) @map("row_count")
   validRowCount    Int                        @default(0) @map("valid_row_count")
@@ -721,9 +779,9 @@ model StockAdjustmentImportBatch {
   statusMessage    String?                    @map("status_message") @db.VarChar(1000)
   uploadedBy       String                     @map("uploaded_by") @db.Uuid
   committedBy      String?                    @map("committed_by") @db.Uuid
-  committedAt      DateTime?                  @map("committed_at")
-  createdAt        DateTime                   @default(now()) @map("created_at")
-  updatedAt        DateTime                   @updatedAt @map("updated_at")
+  committedAt      DateTime? @db.Timestamptz(3)                  @map("committed_at")
+  createdAt        DateTime @db.Timestamptz(3)                   @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)                   @updatedAt @map("updated_at")
   warehouse        Warehouse                  @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   rows             StockAdjustmentImportRow[]
 
@@ -750,8 +808,8 @@ model StockAdjustmentImportRow {
   appliedMovementId String?                    @unique @map("applied_movement_id") @db.Uuid
   batch             StockAdjustmentImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   variant           ProductVariant?            @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  createdAt         DateTime                   @default(now()) @map("created_at")
-  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  createdAt         DateTime @db.Timestamptz(3)                   @default(now()) @map("created_at")
+  updatedAt         DateTime @db.Timestamptz(3)                   @updatedAt @map("updated_at")
 
   @@unique([batchId, rowNumber])
   @@index([batchId, status])
@@ -766,8 +824,8 @@ model TaxCategory {
   description String?      @db.VarChar(255)
   status      RecordStatus @default(ACTIVE)
   rates       TaxRate[]
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
+  createdAt   DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
+  updatedAt   DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
 
   @@map("tax_categories")
 }
@@ -781,12 +839,12 @@ model TaxProfile {
   roundingLevel      TaxRoundingLevel  @default(DOCUMENT) @map("rounding_level")
   roundingMethod     TaxRoundingMethod @default(HALF_UP) @map("rounding_method")
   currencyMinorUnits Int               @default(2) @map("currency_minor_units")
-  validFrom          DateTime          @default(now()) @map("valid_from")
-  validTo            DateTime?         @map("valid_to")
+  validFrom          DateTime @db.Timestamptz(3)          @default(now()) @map("valid_from")
+  validTo            DateTime? @db.Timestamptz(3)         @map("valid_to")
   store              Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
   rates              TaxRate[]
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
+  createdAt          DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
+  updatedAt          DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
 
   @@index([storeId, validFrom, validTo])
   @@map("tax_profiles")
@@ -797,11 +855,11 @@ model TaxRate {
   taxProfileId  String      @map("tax_profile_id") @db.Uuid
   taxCategoryId String      @map("tax_category_id") @db.Uuid
   rate          Decimal     @db.Decimal(9, 6)
-  validFrom     DateTime    @default(now()) @map("valid_from")
-  validTo       DateTime?   @map("valid_to")
+  validFrom     DateTime @db.Timestamptz(3)    @default(now()) @map("valid_from")
+  validTo       DateTime? @db.Timestamptz(3)   @map("valid_to")
   taxProfile    TaxProfile  @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
   taxCategory   TaxCategory @relation(fields: [taxCategoryId], references: [id], onDelete: Restrict)
-  createdAt     DateTime    @default(now()) @map("created_at")
+  createdAt     DateTime @db.Timestamptz(3)    @default(now()) @map("created_at")
 
   @@index([taxProfileId, taxCategoryId, validFrom])
   @@map("tax_rates")
@@ -820,7 +878,7 @@ model AuditLog {
   before      Json?
   after       Json?
   metadata    Json?
-  occurredAt  DateTime @default(now()) @map("occurred_at")
+  occurredAt  DateTime @db.Timestamptz(3) @default(now()) @map("occurred_at")
 
   @@index([storeId, occurredAt])
   @@index([actorUserId, occurredAt])

@@ -22,7 +22,9 @@ export default function WorkspacesPage() {
     const meData = await me.json(); setUser(meData.user);
     const response = await fetch("/api/workspaces", { credentials: "same-origin", cache: "no-store" });
     if (!response.ok) throw new Error("ไม่สามารถโหลด Workspace ได้");
-    setItems(await response.json());
+    const workspaces = await response.json() as Workspace[];
+    // Keep the internal test workspace out of the user-facing workspace picker.
+    setItems(workspaces.filter(item => item.slug !== "test"));
   }
   useEffect(() => { load().catch(e=>setError(e.message)).finally(()=>setLoading(false)); }, []);
 

@@ -44,6 +44,13 @@ export class TenantMigrationRunner {
       await client.query(`REVOKE ALL ON DATABASE ${database} FROM PUBLIC`);
       await client.query(`REVOKE ALL ON DATABASE ${database} FROM syncup_runtime`);
       await client.query(`GRANT CONNECT ON DATABASE ${database} TO ${role}`);
+      await client.query(`REVOKE ALL ON SCHEMA public FROM PUBLIC`);
+      await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC`);
+      await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC`);
+      await client.query(`REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC`);
+      await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`);
       await client.query(`REVOKE ALL ON SCHEMA public FROM syncup_runtime`);
       await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM syncup_runtime`);
       await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM syncup_runtime`);
@@ -51,6 +58,8 @@ export class TenantMigrationRunner {
       await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE USAGE, SELECT ON SEQUENCES FROM syncup_runtime`);
       await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
       await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
+      await client.query(`REVOKE INSERT, UPDATE, DELETE ON TABLE public.tenant_migrations FROM ${role}`);
+      await client.query(`GRANT SELECT ON TABLE public.tenant_migrations TO ${role}`);
       await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
       await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${role}`);
       await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${role}`);

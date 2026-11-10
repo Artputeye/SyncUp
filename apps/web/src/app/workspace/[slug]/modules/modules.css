@@ -1,0 +1,23 @@
+.module-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  text-align: left;
+}
+.module-card h3,
+.module-card p { margin: 0; }
+.module-card p { color: var(--muted, #64748b); line-height: 1.55; }
+.module-compatibility {
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.module-compatibility ul { margin: 8px 0 0; padding-left: 18px; }
+.module-actions { display: flex; gap: 8px; margin-top: auto; }
+.module-actions button { min-width: 120px; }
+.module-card .store-card-details { display: grid; gap: 6px; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .module-actions { flex-direction: column; }
+  .module-actions button { width: 100%; }
+}

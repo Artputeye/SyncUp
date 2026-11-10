@@ -1,17 +1,23 @@
-import { Body, Controller, Get, Param, Patch, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../auth/auth.guard";
 import { PlatformAdminGuard } from "./platform-admin.guard";
 import { PlatformAdminService } from "./platform-admin.service";
+import { BackupLocationService } from "./backup-location.service";
 
 type AdminRequest = Request & { user: { userId: string; isPlatformAdmin: boolean } };
 
 @Controller("platform-admin")
 @UseGuards(AuthGuard, PlatformAdminGuard)
 export class PlatformAdminController {
-  constructor(private readonly admin: PlatformAdminService) {}
+  constructor(
+    private readonly admin: PlatformAdminService,
+    private readonly backupLocation: BackupLocationService
+  ) {}
 
   @Get("overview") overview() { return this.admin.overview(); }
+  @Get("backup-location") backupLocationStatus() { return this.backupLocation.getStatus(); }
+  @Put("backup-location") saveBackupLocation(@Body() body: { path: string }) { return this.backupLocation.save(body.path); }
   @Get("users") users(@Query("q") q = "") { return this.admin.listUsers(q); }
   @Patch("users/:userId/status") userStatus(@Param("userId") userId: string, @Body() body: { status: "ACTIVE" | "DISABLED" }, @Req() req: AdminRequest) {
     return this.admin.setUserStatus(userId, body.status, req.user.userId);

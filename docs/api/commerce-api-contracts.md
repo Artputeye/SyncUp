@@ -354,6 +354,61 @@ Rules:
 - Supplier และ Purchase Order เป็น Optional Module/Reference; Commerce Core ต้องรับสินค้าได้เมื่อไม่ได้เปิด Procurement
 - API นี้เป็น Authenticated API เท่านั้น; ห้ามเปิดเผย unitCost/InventoryCost ผ่าน Public Store API
 
+### 5.6.1 Implemented MVP — Stock Reservation / Inventory transaction API
+
+Base path: `/api/tenant/:workspaceId/inventory`
+
+สิทธิ์แยกตามการกระทำ: `commerce.inventory.reservation.manage` สำหรับ Reservation, `commerce.inventory.receive` สำหรับรับสินค้า, `commerce.inventory.issue` สำหรับเบิกสินค้า, `commerce.inventory.movement.reverse` สำหรับย้อนรายการ (Manager/Admin/Owner) และ `commerce.inventory.view` สำหรับดูยอดคงเหลือ ทุก route ใช้ AuthGuard + RbacGuard และ Tenant DB ที่ resolve จาก Membership เท่านั้น
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/reservations` | จอง available stock |
+| POST | `/reservations/:reservationId/release` | Release reservation |
+| POST | `/reservations/:reservationId/consume` | Consume reservation และตัด on-hand |
+| POST | `/reservations/expire` | ปล่อย reservation ที่หมดอายุแบบ bounded batch |
+| POST | `/receipts` | รับสินค้าเข้าและคำนวณ WAC |
+| POST | `/sales` | ตัดสต็อกโดยตรง |
+| POST | `/movements/:movementId/reverse` | Reversal movement เดิมหนึ่งครั้ง |
+| GET | `/warehouses/:warehouseId/variants/:variantId/balance` | อ่านยอด on-hand/reserved/available |
+
+ตัวอย่าง Reserve:
+```json
+{
+  "warehouseId": "warehouse-uuid",
+  "variantId": "variant-uuid",
+  "quantity": "1.250",
+  "idempotencyKey": "checkout-order-123",
+  "referenceType": "ORDER",
+  "referenceId": "order-uuid",
+  "expiresAt": "2026-11-04T12:00:00.000Z"
+}
+```
+
+ตัวอย่าง Receipt:
+```json
+{
+  "warehouseId": "warehouse-uuid",
+  "variantId": "variant-uuid",
+  "quantity": "5.000",
+  "unitCost": "125.000000",
+  "idempotencyKey": "receipt-001",
+  "reason": "Initial receiving"
+}
+```
+
+Rules:
+- Quantity ต้องส่งเป็น Decimal string เท่านั้น สูงสุด 3 ตำแหน่ง; unitCost เป็น Decimal string สูงสุด 6 ตำแหน่ง; ปฏิเสธ JSON number/float และไม่ปัดเศษเงียบ ๆ
+- Reserve ใช้ row lock และลด available/เพิ่ม reserved ใน transaction เดียว; Reservation idempotency retry ด้วย key/payload เดิมคืน Reservation เดิม
+- Release/Consume ทำได้เฉพาะ ACTIVE; retry หลังเป็น terminal state ไม่เปลี่ยนยอดซ้ำ; expiry ตรวจด้วยเวลาฐานข้อมูลและปล่อย reserved ผ่าน expiry batch. Consume ต้องตรวจ expiry ภายใต้ reservation row lock; หากหมดอายุให้ Release แทนและห้ามสร้าง SALE movement
+- Reservation และ Release เป็น lifecycle records ไม่ใช่ Physical StockMovement; StockMovement มีเฉพาะ physical quantity delta
+- Consume/Issue ลด on_hand และ InventoryCost; Receipt เพิ่ม on_hand และคำนวณ Moving WAC; ทุกการเปลี่ยน Balance/Cost/Movement อยู่ใน transaction เดียว
+- WAC ใช้ PostgreSQL NUMERIC arithmetic, quantity 3 decimals, cost/value 6 decimals, HALF_UP; เมื่อ quantity เป็นศูนย์ให้ value/average cost เป็นศูนย์; หาก InventoryCost ไม่ reconcile กับ StockBalance ให้ reject ไม่แก้เงียบ ๆ
+- Reversal สร้าง movement ที่มี quantity delta ตรงข้ามต้นฉบับ, อ้าง `reversal_of_id`, ต้องมี reason และทำได้หนึ่งครั้งต่อ movement; ห้ามแก้/ลบ ledger เดิม
+- Idempotency key ซ้ำกับ payload เดิมเป็น replay; key เดิมกับ payload ต่างกันตอบ Conflict (409)
+- unitCost/InventoryCost เป็นข้อมูล authenticated API เท่านั้น ห้ามส่งผ่าน Public Store API
+
+ขอบเขต MVP นี้ยังไม่ใช่ Full Opening Stock/Draft Direct Receiving workflow, multi-line receiving, Supplier/PO ownership, Return, Transfer, CSV Adjustment หรือ Audit UI; ยังต้องพัฒนาก่อน Commerce Migration Sign-off/Production rollout
+
 ### 5.7 Stock Adjustment ผ่าน CSV (OWNER only)
 
 สิทธิ์: Workspace Owner เท่านั้น โดยใช้ `Membership.isOwner = true` เป็นตัวตัดสินสิทธิ์หลักจาก Control DB ทุก Request; Platform Admin ไม่ถือเป็น Workspace Owner โดยอัตโนมัติ และห้ามอาศัยการซ่อนปุ่ม/Role จาก Client แทนการตรวจฝั่ง Server
@@ -566,6 +621,12 @@ Public API MUST NOT expose unpublished products, draft categories, average cost,
 | store-category.read / create / update / archive | Store taxonomy |
 | store-product-category.manage | Store assortment |
 | pricing.read / pricing.manage | Store pricing |
+| commerce.store.manage | Store / Branch / Warehouse lifecycle |
+| commerce.inventory.reservation.manage | Create/release/consume/expire reservations |
+| commerce.inventory.receive | Receive stock |
+| commerce.inventory.issue | Issue stock |
+| commerce.inventory.movement.reverse | Reverse posted stock movements (Manager/Admin/Owner) |
+| commerce.inventory.view | Read stock balances | |
 
 Owner bypasses permission checks according to current Workspace membership policy. Admin/other roles receive explicit permissions; do not assume every role has all commerce permissions.
 

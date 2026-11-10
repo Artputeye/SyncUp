@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import BackupSettingsPanel from "./backup-settings";
 
 type User = { id: string; email: string; displayName: string; status: "ACTIVE"|"DISABLED"; isPlatformAdmin: boolean; createdAt: string; _count: { memberships: number } };
 type Workspace = { id: string; slug: string; name: string; status: string; createdAt: string; memberCount: number; database: { provider?: string; databaseName?: string; schemaVersion?: string|null; status: "CONNECTED"|"DISCONNECTED"|"NOT_CONFIGURED" } };
@@ -10,7 +11,7 @@ type Role = { id: string; key: string; name: string; isSystem: boolean; permissi
 
 export default function PlatformAdminPage() {
   const router = useRouter();
-  const [tab,setTab] = useState<"overview"|"users"|"workspaces">("overview");
+  const [tab,setTab] = useState<"overview"|"users"|"workspaces"|"backup">("overview");
   const [overview,setOverview] = useState<Record<string,number>>({});
   const [users,setUsers] = useState<User[]>([]);
   const [workspaces,setWorkspaces] = useState<Workspace[]>([]);
@@ -33,7 +34,11 @@ export default function PlatformAdminPage() {
   }
   async function loadOverview(){setOverview(await api("/api/platform-admin/overview"));}
   async function loadUsers(){setUsers(await api("/api/platform-admin/users"+(search.trim()?"?q="+encodeURIComponent(search.trim()):"")));}
-  async function loadWorkspaces(){setWorkspaces(await api("/api/platform-admin/workspaces"));}
+  async function loadWorkspaces(){
+    const rows = await api("/api/platform-admin/workspaces") as Workspace[];
+    // The internal test workspace is intentionally excluded from Platform Admin UI.
+    setWorkspaces(rows.filter(workspace => workspace.slug !== "test"));
+  }
   async function loadWorkspaceDetails(workspace:Workspace){
     setSelected(workspace);
     const [memberRows,roleRows]=await Promise.all([
@@ -51,8 +56,13 @@ export default function PlatformAdminPage() {
     if(!identity.user?.isPlatformAdmin){router.replace("/workspaces");return;}
     await Promise.all([loadOverview(),loadUsers(),loadWorkspaces()]);
   }
-  useEffect(()=>{load().catch(e=>setError(e.message)).finally(()=>setLoading(false));},[]);
+  useEffect(()=>{ if (new URLSearchParams(window.location.search).get("tab") === "backup") setTab("backup"); load().catch(e=>setError(e.message)).finally(()=>setLoading(false)); },[]);
   const allPermissions=useMemo(()=>Array.from(new Map(roles.flatMap(role=>role.permissions).map(permission=>[permission.key,permission])).values()),[roles]);
+  const visibleOverview: Record<string, number> = {
+    ...overview,
+    workspaces: workspaces.length,
+    activeWorkspaces: workspaces.filter(workspace => workspace.status === "ACTIVE").length
+  };
 
   async function changeUserStatus(user:User){
     const status=user.status==="ACTIVE"?"DISABLED":"ACTIVE";
@@ -91,11 +101,12 @@ export default function PlatformAdminPage() {
     <section className="dashboard-content">
       <div className="dashboard-head"><div><div className="eyebrow">SYSTEM CONTROL CENTER</div><h1>System Admin</h1><p className="subtle">จัดการบัญชีผู้ใช้ Workspace และโครงสร้างระบบจากส่วนกลาง</p></div><span className="admin-pill">Platform Admin</span></div>
       {error&&<div className="error" role="alert">{error}</div>}{notice&&<div className="success" role="status">{notice}</div>}
-      <nav className="admin-tabs"><button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}>ภาพรวม</button><button className={tab==="users"?"active":""} onClick={()=>setTab("users")}>ผู้ใช้</button><button className={tab==="workspaces"?"active":""} onClick={()=>setTab("workspaces")}>Workspace</button></nav>
+      <nav className="admin-tabs"><button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}>ภาพรวม</button><button className={tab==="users"?"active":""} onClick={()=>setTab("users")}>ผู้ใช้</button><button className={tab==="workspaces"?"active":""} onClick={()=>setTab("workspaces")}>Workspace</button><button className={tab==="backup"?"active":""} onClick={()=>setTab("backup")}>Backup / NAS</button></nav>
       {loading?<p className="subtle">กำลังโหลดข้อมูลระบบ...</p>:<>
-        {tab==="overview"&&<><div className="dashboard-stats admin-stats">{[["ผู้ใช้ทั้งหมด",overview.users],["บัญชีใช้งาน",overview.activeUsers],["บัญชีปิดใช้งาน",overview.disabledUsers],["Workspace ทั้งหมด",overview.workspaces],["Workspace ใช้งาน",overview.activeWorkspaces],["สมาชิกทั้งหมด",overview.memberships]].map(([label,value])=><div className="stat-card" key={String(label)}><span>{label}</span><strong>{value??0}</strong></div>)}</div><section className="panel"><div className="panel-heading"><div><h2>สถานะระบบ</h2><p>สถานะการเชื่อมต่อฐานข้อมูล Tenant ล่าสุดที่ตรวจสอบได้</p></div><button className="ghost" onClick={()=>loadWorkspaces().catch(e=>setError(e.message))}>ตรวจสอบอีกครั้ง</button></div><div className="admin-health-list">{workspaces.map(ws=><div className="admin-health-row" key={ws.id}><div><strong>{ws.name}</strong><small>/{ws.slug}</small></div><span className={`health-pill ${ws.database.status.toLowerCase()}`}>{ws.database.status==="CONNECTED"?"เชื่อมต่อได้":ws.database.status==="DISCONNECTED"?"เชื่อมต่อล้มเหลว":"ยังไม่ตั้งค่า"}</span></div>)}</div></section></>}
+        {tab==="overview"&&<><div className="dashboard-stats admin-stats">{[["ผู้ใช้ทั้งหมด",visibleOverview.users],["บัญชีใช้งาน",visibleOverview.activeUsers],["บัญชีปิดใช้งาน",visibleOverview.disabledUsers],["Workspace ทั้งหมด",visibleOverview.workspaces],["Workspace ใช้งาน",visibleOverview.activeWorkspaces],["สมาชิกทั้งหมด",visibleOverview.memberships]].map(([label,value])=><div className="stat-card" key={String(label)}><span>{label}</span><strong>{value??0}</strong></div>)}</div><section className="panel"><div className="panel-heading"><div><h2>สถานะระบบ</h2><p>สถานะการเชื่อมต่อฐานข้อมูล Tenant ล่าสุดที่ตรวจสอบได้</p></div><button className="ghost" onClick={()=>loadWorkspaces().catch(e=>setError(e.message))}>ตรวจสอบอีกครั้ง</button></div><div className="admin-health-list">{workspaces.map(ws=><div className="admin-health-row" key={ws.id}><div><strong>{ws.name}</strong><small>/{ws.slug}</small></div><span className={`health-pill ${ws.database.status.toLowerCase()}`}>{ws.database.status==="CONNECTED"?"เชื่อมต่อได้":ws.database.status==="DISCONNECTED"?"เชื่อมต่อล้มเหลว":"ยังไม่ตั้งค่า"}</span></div>)}</div></section></>}
         {tab==="users"&&<section className="panel"><div className="panel-heading"><div><h2>จัดการผู้ใช้ทั้งหมด</h2><p>ค้นหาบัญชีและเปิดหรือปิดใช้งานการเข้าสู่ระบบ</p></div><span className="count-pill">{users.length} บัญชี</span></div><div className="admin-search"><input value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")loadUsers().catch(err=>setError(err.message));}} placeholder="ค้นหาชื่อหรืออีเมล"/><button className="primary" onClick={()=>loadUsers().catch(e=>setError(e.message))}>ค้นหา</button></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>ผู้ใช้</th><th>Workspace</th><th>สิทธิ์ระบบ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{users.map(user=><tr key={user.id}><td><strong>{user.displayName}</strong><small>{user.email}</small></td><td>{user._count.memberships}</td><td>{user.isPlatformAdmin?<span className="admin-pill">Platform Admin</span>:"—"}</td><td><span className={`status-pill ${user.status.toLowerCase()}`}>{user.status==="ACTIVE"?"ใช้งาน":"ปิดใช้งาน"}</span></td><td><button className={user.status==="ACTIVE"?"danger-button":"small-action"} disabled={busy} onClick={()=>changeUserStatus(user)}>{user.status==="ACTIVE"?"ปิดใช้งาน":"เปิดใช้งาน"}</button></td></tr>)}</tbody></table></div></section>}
         {tab==="workspaces"&&<section className="panel"><div className="panel-heading"><div><h2>จัดการ Workspace ทั้งหมด</h2><p>ตรวจสอบฐานข้อมูล ระงับหรือเปิดใช้งาน และจัดการสมาชิก/สิทธิ์</p></div><span className="count-pill">{workspaces.length} Workspace</span></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Workspace</th><th>สมาชิก</th><th>สถานะ</th><th>ฐานข้อมูล</th><th>การจัดการ</th></tr></thead><tbody>{workspaces.map(ws=><tr key={ws.id}><td><strong>{ws.name}</strong><small>/{ws.slug}</small><small>{ws.database.databaseName??"ไม่มีฐานข้อมูล"}</small></td><td>{ws.memberCount}</td><td><span className={`status-pill ${ws.status.toLowerCase()}`}>{ws.status}</span></td><td><span className={`health-pill ${ws.database.status.toLowerCase()}`}>{ws.database.status}</span><small>{ws.database.schemaVersion??"ยังไม่มี schema version"}</small></td><td><div className="table-actions"><button className="small-action" onClick={()=>loadWorkspaceDetails(ws).catch(e=>setError(e.message))}>สมาชิก/สิทธิ์</button><button className={ws.status==="SUSPENDED"?"small-action":"danger-button"} disabled={busy||ws.status==="PROVISIONING"||ws.status==="FAILED"} onClick={()=>changeWorkspaceStatus(ws)}>{ws.status==="SUSPENDED"?"เปิดใช้งาน":"ระงับ"}</button></div></td></tr>)}</tbody></table></div></section>}
+        {tab==="backup"&&<BackupSettingsPanel/>}
       </>}
       <p className="dashboard-foot">ทุก API ในส่วนนี้ตรวจสอบ Platform Admin จาก Session ฝั่งเซิร์ฟเวอร์</p>
     </section>

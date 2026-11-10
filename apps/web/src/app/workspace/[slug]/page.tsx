@@ -21,7 +21,6 @@ export default function WorkspaceHomePage() {
   const [notice, setNotice] = useState("");
   const [email, setEmail] = useState("");
   const [newRole, setNewRole] = useState("member");
-  const [selectedRole, setSelectedRole] = useState("member");
   const [editingRole, setEditingRole] = useState("member");
   const [permissions, setPermissions] = useState<string[]>([]);
 
@@ -75,7 +74,7 @@ export default function WorkspaceHomePage() {
   async function logout(){await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin"});router.replace("/");router.refresh()}
 
   return <main className="workspace-shell">
-    <header className="topbar"><button className="brand brand-button" onClick={()=>router.push("/workspaces")}><span className="brand-mark">S</span> SyncUp</button><div className="user-menu"><button className="ghost" onClick={()=>router.push("/workspaces")}>Workspace ทั้งหมด</button><button className="ghost" onClick={logout}>ออกจากระบบ</button></div></header>
+    <header className="topbar"><button className="brand brand-button" onClick={()=>router.push("/workspaces")}><span className="brand-mark">S</span> SyncUp</button><div className="user-menu"><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/modules`)}>จัดการ Modules</button><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/stores`)}>จัดการ Store</button><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/inventory`)}>คลังสินค้า</button><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/products`)}>สินค้า</button><button className="ghost" onClick={()=>router.push("/workspaces")}>Workspace ทั้งหมด</button><button className="ghost" onClick={logout}>ออกจากระบบ</button></div></header>
     <section className="dashboard-content">
       <div className="dashboard-head"><div><div className="eyebrow">WORKSPACE DASHBOARD</div><h1>{workspace?.name??"กำลังโหลด..."}</h1><p className="subtle">{workspace?"/"+workspace.slug:"จัดการทีมและสิทธิ์การเข้าถึงในพื้นที่ทำงานนี้"}</p></div><span className="status">{workspace?.status??"LOADING"}</span></div>
       {error&&<div className="error" role="alert">{error}</div>}{notice&&<div className="success" role="status">{notice}</div>}
