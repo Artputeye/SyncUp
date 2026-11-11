@@ -23,7 +23,7 @@ async function api<T>(path: string): Promise<T> {
 }
 
 const labels: Record<string, string> = {
-  OPENING_STOCK: "ยอดยกมา", RECEIVING: "รับเข้า", SALE: "จ่ายออก", RETURN: "รับคืน",
+  OPENING: "ยอดยกมา", RECEIVING: "รับเข้า", SALE: "จ่ายออก", RETURN: "รับคืน",
   ADJUSTMENT_IN: "ปรับเพิ่ม", ADJUSTMENT_OUT: "ปรับลด",
   TRANSFER_IN: "โอนเข้า", TRANSFER_OUT: "โอนออก", REVERSAL: "ย้อนรายการ",
 };

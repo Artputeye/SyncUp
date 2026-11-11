@@ -726,7 +726,7 @@ export class StockInventoryService {
     const pageSize = filters.pageSize === undefined ? 20 : Number(filters.pageSize);
     if (!Number.isInteger(page) || page < 1 || page > 100000) throw new BadRequestException("page must be a positive integer");
     if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException("pageSize must be between 1 and 100");
-    const allowedTypes = new Set(["OPENING_STOCK", "RECEIVING", "SALE", "RETURN", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "TRANSFER_IN", "TRANSFER_OUT", "REVERSAL"]);
+    const allowedTypes = new Set(["OPENING", "RECEIVING", "SALE", "RETURN", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "TRANSFER_IN", "TRANSFER_OUT", "REVERSAL"]);
     if (filters.movementType && !allowedTypes.has(filters.movementType)) throw new BadRequestException("Unsupported movementType");
     const params: unknown[] = [];
     const conditions: string[] = [];

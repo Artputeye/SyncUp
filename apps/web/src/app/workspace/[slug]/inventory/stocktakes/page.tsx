@@ -168,7 +168,7 @@ export default function StocktakesPage() {
     <main className="workspace-shell">
       <header className="topbar">
         <button className="brand brand-button" onClick={() => router.push(`/workspace/${slug}`)}><span className="brand-mark">S</span> SyncUp</button>
-        <div className="user-menu"><button className="ghost" onClick={() => router.push(`/workspace/${slug}/inventory`)}>คลังสินค้า</button><button className="ghost" onClick={() => router.push(`/workspace/${slug}/inventory/history`)}>ประวัติ Movement</button><button className="ghost" onClick={() => router.push(`/workspace/${slug}`)}>Workspace</button></div>
+        <div className="user-menu"><button className="ghost" onClick={() => router.push(`/workspace/${slug}/inventory/opening-stock`)}>ยอดตั้งต้น</button><button className="ghost" onClick={() => router.push(`/workspace/${slug}/inventory`)}>คลังสินค้า</button><button className="ghost" onClick={() => router.push(`/workspace/${slug}/inventory/history`)}>ประวัติ Movement</button><button className="ghost" onClick={() => router.push(`/workspace/${slug}`)}>Workspace</button></div>
       </header>
       <section className="dashboard-content stocktake-page">
         <div className="dashboard-head"><div><div className="eyebrow">COMMERCE / INVENTORY / STOCKTAKE</div><h1>ตรวจนับสต็อก</h1><p className="subtle">{workspace?.name ?? "กำลังโหลด Workspace..."} · เปิดรอบตรวจนับ บันทึกยอดจริง และกระทบยอดอย่างมีหลักฐาน</p></div></div>

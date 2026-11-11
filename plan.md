@@ -162,7 +162,7 @@
 - [ ] 2.7 ป้องกันขายเกินสต๊อกด้วย DB Transaction/Lock
 - [ ] 2.8 นโยบายสินค้าติดลบ (ค่าเริ่มต้นไม่อนุญาต ยกเว้นผู้มีสิทธิ์)
 - [ ] 2.9 ต้นทุน Moving Weighted Average และ Cost Snapshot ในรายการขาย
-- [ ] 2.10 Opening Stock: บันทึกยอดตั้งต้นเป็น Session ต่อ Warehouse พร้อม quantity และ unit cost; แต่ละ Warehouse Post ได้เพียงหนึ่ง Session
+- [x] 2.10 Opening Stock: บันทึกยอดตั้งต้นเป็น Session ต่อ Warehouse พร้อม quantity และ unit cost; แต่ละ Warehouse Post ได้เพียงหนึ่ง Session (API/UI/E2E implemented 2026-11-10)
 - [ ] 2.10a Direct Receiving: รับสินค้าเข้า Warehouse ได้โดยไม่ต้องมี Supplier/PO; Supplier เป็นข้อมูลอ้างอิงเสริม
 - [ ] 2.10b ทั้งสองวิธีสร้าง Stock Ledger และคำนวณ Moving Weighted Average แบบ Atomic + Idempotent; หลัง Post แก้ย้อนหลังด้วย Reversal/Adjustment เท่านั้น
 - [ ] 2.10c Quantity ทุกหน่วยรองรับจำนวนเต็ม/ทศนิยมสูงสุด 3 ตำแหน่ง; ใช้ Decimal และ Validation สอดคล้องกันทุก API/ตาราง
@@ -974,12 +974,80 @@ Final review disposition: **PARTIAL PASS — Migration Sign-off NOT GRANTED.** T
 ### Current safeguards and remaining work
 - No deployment, commit or push was performed as part of the database migration/UI verification.
 - Control DB migration ledger resolution for Control migrations 003/004 was approved in a separate step but has not been executed; do not claim it is reconciled. Control migration 005 remains unreconciled and must not be deployed as-is.
-- Opening Stock per Warehouse is not implemented. Do not treat Stocktake as an Opening Stock workflow.
+- At the time of this checkpoint, Opening Stock per Warehouse was still outstanding; it was implemented in the subsequent checkpoint below. Stocktake remains a separate workflow.
 - Off-host encrypted backup and key-recovery design remain open. The existing local backup is not encrypted.
 - Preserve the distinction between `e2e-commerce-20261106` and production-like `pos-local`; do not reuse E2E fixtures against production data.
 
 ### Recommended next implementation
-1. Implement Opening Stock per Warehouse with auditable opening movements and safe idempotency/concurrency behavior.
+1. Completed in the subsequent Opening Stock checkpoint below.
 2. Add real-browser UI/API integration coverage for Stocktake against `pos-local` only when a controlled test fixture and cleanup plan are in place.
 3. Resolve the Control migration ledger state only within the exact previously approved 003/004 scope; review migration 005 separately.
 4. Complete encrypted off-host backup and restore/key-recovery verification before treating backup readiness as production-grade.
+
+
+## Checkpoint — 2026-11-10: Opening Stock per Warehouse implementation
+
+### Implemented
+- Added `OpeningStockService` and `OpeningStockController` in the Inventory module:
+  - `GET /api/tenant/:workspaceId/inventory/opening-stocks` — paginated list and status/warehouse filters.
+  - `POST /api/tenant/:workspaceId/inventory/opening-stocks` — create a DRAFT session with multi-line variant quantities and unit costs.
+  - `GET /api/tenant/:workspaceId/inventory/opening-stocks/:openingStockId` — session detail.
+  - `PATCH /api/tenant/:workspaceId/inventory/opening-stocks/:openingStockId` — edit DRAFT reference, notes and lines; posted/cancelled sessions are immutable.
+  - `POST .../:openingStockId/post` — atomically post all lines.
+  - `POST .../:openingStockId/cancel` — cancel DRAFT only.
+- Reused the existing Tenant schema and database objects (`OpeningStockSession`, `OpeningStockItem`, `OpeningStockStatus`, and the unique `posted_warehouse_id` index). A read-only audit confirmed the tables, columns, unique indexes, enum values and runtime CRUD grants already exist in `pos-local`; no migration or Production database write was performed.
+- Posting writes StockBalance and InventoryCost, creates `StockMovementType.OPENING` with `StockReferenceType.OPENING_STOCK`, and writes audit events in the same transaction. Opening cost initializes WAC and inventory value directly from quantity × unit cost.
+- Safety rules: one posted Opening Stock session per Warehouse; unique variants per draft; positive quantities up to 3 decimals; non-negative unit cost up to 6 decimals; idempotency replay checks the complete payload; changed payload returns conflict; posting is atomic and row-locked; an item with prior movement history or non-empty balance/cost cannot be initialized; a posted session cannot be cancelled.
+- Uses existing `commerce.inventory.receive` permission for create/post/cancel and `commerce.inventory.view` for list/detail; no new Control RBAC migration was required.
+- Added UI at `/workspace/[slug]/inventory/opening-stock` with multi-line entry, DRAFT editing, CSV import by SKU/quantity/unitCost (including a downloadable template), draft review, post confirmation, cancellation, list/detail and navigation from Inventory/Stocktake. Movement history now displays and filters `OPENING` as “ยอดยกมา”.
+- Added `apps/api/scripts/verify-opening-stock-http-e2e.cjs` and `apps/web/e2e/opening-stock-ui.spec.ts`.
+
+### Verification
+- API typecheck PASS; API build PASS.
+- Web typecheck PASS; Web production build PASS.
+- Real API/DB HTTP E2E on `e2e-commerce-20261106` PASS: Inventory Staff create permission, Cashier denied with HTTP 403, create/replay, payload conflict 409, concurrent post (exactly one movement), WAC/InventoryCost/StockBalance reconciliation, movement history filter, one-post-per-warehouse conflict 409, and fixture cleanup.
+- Browser UI E2E PASS (1/1). Opening Stock endpoints and supporting catalog/warehouse data are stubbed in this UI test; the separate HTTP E2E above exercises the real API/database.
+- API lint could not run because ESLint is not installed in the API workspace. Web lint is currently blocked by the repository's ESLint 9 configuration (no `eslint.config.*`); these are tooling/configuration issues, not passing lint checks.
+- No migration, live `pos-local` inventory mutation, deployment, commit or push was performed for this implementation. E2E fixtures were cleaned up.
+
+### Follow-up
+1. Completed 2026-11-11: CSV export for selected Opening Stock documents and all-or-nothing bulk CSV validation preview (per-row status/reason; confirm enabled only when every row is valid).
+2. Completed 2026-11-11: Opening Stock permission-specific HTTP assertions for Cashier and Viewer.
+3. Keep Opening Stock as a one-time baseline workflow; use Direct Receiving for subsequent inbound stock and Stocktake for physical count reconciliation.
+
+### Follow-up verification — 2026-11-11
+- Added DRAFT edit endpoint and UI. PATCH locks the session row, rejects non-DRAFT state, validates active variants and duplicate variants, replaces item lines atomically, and writes a draft-update audit event.
+- Preserved create idempotency semantics across edits by storing the original create payload in the `OPENING_STOCK_CREATED` audit metadata. Replaying the original key/payload after an edit still resolves to the original session; a changed payload remains HTTP 409. Legacy DRAFT records receive their original payload snapshot on first edit.
+- Added CSV import with case-insensitive SKU matching, duplicate/unknown SKU detection, quantity/cost validation, quoted-field parsing, a 2 MB file-size limit, a 500-item limit, and template download. Import is available when creating or editing a DRAFT.
+- API HTTP E2E PASS on `e2e-commerce-20261106`: edit DRAFT, verify edited values, replay original create payload after edit, verify posting, verify PATCH after post returns HTTP 409, reconcile quantity/WAC/inventory value/movement and cleanup.
+- Browser UI E2E PASS (1/1): create DRAFT, enter edit mode, import CSV, save edited draft, then post. API/data endpoints remain stubbed in this browser test.
+- API typecheck/build PASS; Web typecheck/production build PASS.
+- Follow-up: selected document CSV export includes SKU, product/variant, quantity, unit cost, total cost and UOM. CSV import now presents a row-by-row validation preview and only permits all-valid imports; invalid SKU and disabled-confirm behavior are covered by Playwright.
+- Browser UI E2E PASS (1/1) including invalid-row preview, successful import confirmation, Draft edit, Post and CSV download.
+- No migration, live `pos-local` database write, deployment, commit or push was performed.
+
+### Opening Stock RBAC verification — 2026-11-11
+- Extended `apps/api/scripts/verify-opening-stock-http-e2e.cjs` with role-specific checks against a real DRAFT in the dedicated `e2e-commerce-20261106` workspace.
+- Cashier: list/detail access remains allowed; create, DRAFT edit and post all return HTTP 403.
+- Viewer: this E2E workspace has no dedicated Viewer account, so the existing Cashier membership was temporarily switched to the existing `viewer` role for the HTTP checks. Viewer list/detail and create/edit/post all return HTTP 403 (the Viewer role does not have `commerce.inventory.view`). The original Cashier membership role was restored in `finally` and independently verified.
+- Opening Stock HTTP E2E PASS; general inventory RBAC smoke test PASS (4 roles, 36 authorization assertions); API typecheck/build PASS.
+- E2E fixture cleanup passed. No production workspace, production role, tenant migration, deployment, commit or push was performed.
+
+## Checkpoint — 2026-11-11: Inventory end-to-end regression verification
+
+### API / database workflows
+- `apps/api/scripts/verify-inventory-http-e2e.cjs` PASS on `e2e-commerce-20261106`: Receive, Issue, Adjustment In/Out, Movement History filters/pagination, Transfer paired movements, idempotency replay, validation/rollback, stale Stocktake snapshot, Stocktake finalize/cancel, and transfer concurrency (same-key and distinct-key parallel requests).
+- `apps/api/scripts/verify-opening-stock-http-e2e.cjs` PASS: Opening Stock create/edit/post, original-payload idempotency after Draft edit, RBAC negative assertions and fixture cleanup.
+- `apps/api/scripts/verify-e2e-inventory-rbac-http.cjs` PASS: 4 roles and 36 authorization assertions.
+- `apps/api/scripts/verify-stocktake-ui-real-api-e2e.cjs` PASS after starting the local Web server: real browser create/count/finalize against API and database; WAC 5.181818, inventory value 57.000000, one `ADJUSTMENT_IN` movement; fixture and audit cleanup PASS.
+
+### Browser UI regression
+- Playwright PASS: 6/6 across `inventory-management.spec.ts`, `opening-stock-ui.spec.ts` and `pos-local-stocktake-ui.spec.ts`.
+- Corrected stale `pos-local-stocktake-ui.spec.ts` expectations: it previously relied on obsolete element IDs and attempted to run an Inventory Staff account from the E2E workspace against `pos-local`. The POS-local spec now checks the current accessible controls for its Manager scenario; Inventory Staff permission coverage remains in the E2E-workspace spec.
+- Web TypeScript typecheck PASS; Next.js production build PASS.
+
+### Scope / safety
+- All API fixture tests ran against the dedicated local E2E workspace and cleaned up test records/audit rows.
+- Real-browser Stocktake API test used the same E2E workspace; no business fixture remained.
+- No production `pos-local` database mutation, migration, permission change, deployment, commit or push was performed.
+- `git diff --check` PASS. Existing unrelated worktree changes were preserved.

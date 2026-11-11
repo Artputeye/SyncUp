@@ -18,18 +18,14 @@ async function expectInventoryPage(page: Page) {
   await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/inventory$"));
   await expect(page.getByRole("heading", { name: "คลังสินค้า" })).toBeVisible();
   await expect(page.getByText(/รับเข้า จ่ายออก ปรับยอด และโอนระหว่างคลัง/)).toBeVisible();
-  const ready = await page.locator("#inventory-variant").count();
-  if (ready) {
-    await expect(page.locator("#inventory-warehouse")).toBeVisible();
-    await expect(page.getByRole("tab", { name: "รับสินค้าเข้า" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "จ่ายสินค้าออก" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "ปรับยอดสต็อก" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "โอนระหว่างคลัง" })).toBeVisible();
-    await page.getByRole("tab", { name: "โอนระหว่างคลัง" }).click();
-    await expect(page.getByLabel("คลังปลายทาง")).toBeVisible();
-  } else {
-    await expect(page.getByRole("heading", { name: "ยังไม่พร้อมทำรายการ" })).toBeVisible();
-  }
+  await expect(page.getByRole("combobox", { name: "สินค้า / SKU" })).toBeVisible();
+  await expect(page.getByLabel("คลังสินค้า")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "รับสินค้าเข้า" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "จ่ายสินค้าออก" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "ปรับยอดสต็อก" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "โอนระหว่างคลัง" })).toBeVisible();
+  await page.getByRole("tab", { name: "โอนระหว่างคลัง" }).click();
+  await expect(page.getByLabel("คลังปลายทาง")).toBeVisible();
   await page.getByRole("button", { name: "ประวัติ Movement" }).click();
   await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/inventory/history$"));
   await expect(page.getByRole("heading", { name: "ประวัติการเคลื่อนไหวสินค้า" })).toBeVisible();
@@ -42,14 +38,6 @@ test("Inventory UI loads transaction modes and movement history for Manager", as
   const email = process.env.LOCAL_TEST_MANAGER_EMAIL;
   const password = process.env.LOCAL_TEST_MANAGER_PASSWORD;
   test.skip(!email || !password, "Dedicated E2E Manager credentials are required.");
-  await signInToWorkspace(page, email!, password!);
-  await expectInventoryPage(page);
-});
-
-test("Inventory Staff can open inventory and movement history with workspace permissions", async ({ page }) => {
-  const email = process.env.E2E_INVENTORY_EMAIL;
-  const password = process.env.E2E_INVENTORY_PASSWORD;
-  test.skip(!email || !password, "Dedicated E2E Inventory Staff credentials are required.");
   await signInToWorkspace(page, email!, password!);
   await expectInventoryPage(page);
 });
