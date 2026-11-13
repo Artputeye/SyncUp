@@ -1,9 +1,12 @@
+export type WorkspaceType = "POS" | "ONLINE";
+
 export interface ModuleManifest {
   id: string;
   name: string;
   description: string;
   version: string;
   source: "bundled";
+  workspaceTypes: WorkspaceType[];
   compatibility: {
     minPlatformVersion: string;
     maxPlatformVersionExclusive: string;
@@ -19,6 +22,7 @@ export const COMMERCE_MODULE_MANIFEST: ModuleManifest = {
   description: "Store, branch, warehouse, product, inventory and sales capabilities.",
   version: "0.1.0",
   source: "bundled",
+  workspaceTypes: ["POS"],
   compatibility: {
     minPlatformVersion: "0.1.0",
     maxPlatformVersionExclusive: "1.0.0",

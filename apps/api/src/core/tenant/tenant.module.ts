@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { RbacModule } from "../rbac/rbac.module";
+import { ModulesModule } from "../modules/modules.module";
 import { TenantController } from "./tenant.controller";
 import { StoresController } from "./stores.controller";
 import { BranchesController } from "./branches.controller";
@@ -12,7 +13,7 @@ import { BranchQueryService } from "./branch-query.service";
 import { WarehouseQueryService } from "./warehouse-query.service";
 
 @Module({
-  imports: [AuthModule, RbacModule],
+  imports: [AuthModule, RbacModule, ModulesModule],
   controllers: [TenantController, StoresController, BranchesController, WarehousesController],
   providers: [TenantService, StoreLifecycleService, StoreQueryService, BranchQueryService, WarehouseQueryService],
   exports: [StoreLifecycleService, StoreQueryService, BranchQueryService, WarehouseQueryService],

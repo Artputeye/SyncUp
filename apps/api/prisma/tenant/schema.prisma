@@ -113,6 +113,30 @@ enum StockReferenceType {
   STOCKTAKE
 }
 
+enum SalesPaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  OTHER
+}
+
+enum SalesPaymentStatus {
+  CAPTURED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum SalesReturnStatus {
+  POSTED
+  CANCELLED
+}
+
+enum SalesOrderStatus {
+  RESERVED
+  CANCELLED
+  POSTED
+}
+
 enum StockAdjustmentStatus {
   DRAFT
   PREVIEWED
@@ -174,6 +198,7 @@ model Store {
   timezone      String          @default("Asia/Bangkok") @db.VarChar(64)
   isPublished   Boolean         @default(false) @map("is_published")
   branches      Branch[]        @relation("StoreBranches")
+  salesOrders   SalesOrder[]
   categories    StoreCategory[]
   storeProducts StoreProduct[]
   taxProfiles   TaxProfile[]
@@ -196,6 +221,8 @@ model Branch {
   phone      String?      @db.VarChar(40)
   store      Store        @relation("StoreBranches", fields: [storeId], references: [id], onDelete: Restrict)
   warehouses Warehouse[]
+  salesOrders SalesOrder[]
+  orderSequences OrderSequence[]
   createdAt  DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
   updatedAt  DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
 
@@ -221,6 +248,8 @@ model Warehouse {
   receivingDocuments DirectReceiving[]
   adjustmentBatches  StockAdjustmentImportBatch[]
   stocktakeSessions  StocktakeSession[]
+  salesOrders         SalesOrder[]
+  salesReturns        SalesReturn[]
   createdAt          DateTime @db.Timestamptz(3)                     @default(now()) @map("created_at")
   updatedAt          DateTime @db.Timestamptz(3)                     @updatedAt @map("updated_at")
 
@@ -271,6 +300,7 @@ model ProductVariant {
   id             String                     @id @default(uuid()) @db.Uuid
   productId      String                     @map("product_id") @db.Uuid
   baseUomId      String                     @map("base_uom_id") @db.Uuid
+  taxCategoryId  String?                    @map("tax_category_id") @db.Uuid
   sku            String                     @db.VarChar(100)
   normalizedSku  String                     @unique @map("normalized_sku") @db.VarChar(100)
   title          String                     @db.VarChar(160)
@@ -279,7 +309,10 @@ model ProductVariant {
   attributes     Json?
   product        Product                    @relation(fields: [productId], references: [id], onDelete: Restrict)
   baseUom        UnitOfMeasure              @relation("VariantBaseUom", fields: [baseUomId], references: [id], onDelete: Restrict)
+  taxCategory    TaxCategory?                @relation(fields: [taxCategoryId], references: [id], onDelete: Restrict)
   variantUoms    VariantUom[]
+  salesOrderItems SalesOrderItem[]
+  salesReturnItems SalesReturnItem[]
   barcodes       VariantBarcode[]
   qrCodes        VariantQRCode[]
   storeVariants  StoreProductVariant[]
@@ -298,6 +331,7 @@ model ProductVariant {
 
   @@unique([productId, id])
   @@index([productId, status])
+  @@index([taxCategoryId])
   @@index([sku])
   @@map("product_variants")
 }
@@ -318,6 +352,8 @@ model VariantUom {
   @@unique([variantId, uomId])
   @@unique([variantId, id])
   @@index([uomId, status])
+  salesOrderItems SalesOrderItem[]
+
   @@map("variant_uoms")
 }
 
@@ -628,6 +664,8 @@ model StockReservation {
 
   @@index([warehouseId, variantId, status])
   @@index([status, expiresAt])
+  orderItem      SalesOrderItem?
+
   @@map("stock_reservations")
 }
 
@@ -643,6 +681,186 @@ model InventoryCost {
 
   @@id([warehouseId, variantId])
   @@map("inventory_costs")
+}
+
+model OrderSequence {
+  branchId      String   @map("branch_id") @db.Uuid
+  documentType  String   @map("document_type") @db.VarChar(12)
+  sequenceYear  Int      @map("sequence_year")
+  lastValue     BigInt   @default(0) @map("last_value")
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  updatedAt     DateTime @db.Timestamptz(3) @updatedAt @map("updated_at")
+
+  @@id([branchId, documentType, sequenceYear])
+  @@map("order_sequences")
+}
+
+model SalesOrder {
+  id                String           @id @default(uuid()) @db.Uuid
+  storeId           String           @map("store_id") @db.Uuid
+  branchId          String           @map("branch_id") @db.Uuid
+  warehouseId       String           @map("warehouse_id") @db.Uuid
+  orderNumber       String           @map("order_number") @db.VarChar(64)
+  status            SalesOrderStatus @default(RESERVED)
+  currency          String           @default("THB") @db.Char(3)
+  taxProfileId      String?          @map("tax_profile_id") @db.Uuid
+  taxMode           TaxMode          @default(NO_VAT) @map("tax_mode")
+  priceTaxMode      PriceTaxMode     @default(EXCLUSIVE) @map("price_tax_mode")
+  roundingMinorUnits Int             @default(2) @map("rounding_minor_units")
+  subtotal          Decimal          @default(0) @db.Decimal(24, 4)
+  taxAmount         Decimal          @default(0) @map("tax_amount") @db.Decimal(24, 4)
+  totalAmount       Decimal          @default(0) @map("total_amount") @db.Decimal(24, 4)
+  idempotencyKey    String           @unique @map("idempotency_key") @db.VarChar(160)
+  idempotencyPayload Json            @map("idempotency_payload")
+  createdBy         String           @map("created_by") @db.Uuid
+  cancelledBy       String?          @map("cancelled_by") @db.Uuid
+  cancelledAt       DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  cancelReason      String?          @map("cancel_reason") @db.VarChar(500)
+  postedBy          String?          @map("posted_by") @db.Uuid
+  postedAt          DateTime?        @map("posted_at") @db.Timestamptz(3)
+  postingIdempotencyKey String?      @unique @map("posting_idempotency_key") @db.VarChar(160)
+  store             Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  branch            Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  warehouse         Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  taxProfile        TaxProfile?      @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
+  items             SalesOrderItem[]
+  returns           SalesReturn[]
+  payments          SalesPayment[]
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([branchId, orderNumber])
+  @@index([storeId, status, createdAt])
+  @@index([branchId, createdAt])
+  @@index([warehouseId, status])
+  @@map("sales_orders")
+}
+
+model SalesOrderItem {
+  id                 String          @id @default(uuid()) @db.Uuid
+  orderId            String          @map("order_id") @db.Uuid
+  lineNumber         Int             @map("line_number")
+  variantId          String          @map("variant_id") @db.Uuid
+  variantUomId       String          @map("variant_uom_id") @db.Uuid
+  reservationId      String          @unique @map("reservation_id") @db.Uuid
+  productName        String          @map("product_name") @db.VarChar(200)
+  variantTitle       String          @map("variant_title") @db.VarChar(160)
+  sku                String          @db.VarChar(100)
+  uomCode            String          @map("uom_code") @db.VarChar(32)
+  uomName            String          @map("uom_name") @db.VarChar(80)
+  quantity           Decimal         @db.Decimal(20, 3)
+  baseQuantity       Decimal         @map("base_quantity") @db.Decimal(20, 3)
+  conversionFactor   Decimal         @map("conversion_factor") @db.Decimal(20, 9)
+  priceId            String?         @map("price_id") @db.Uuid
+  unitPrice          Decimal         @map("unit_price") @db.Decimal(20, 4)
+  currency           String          @db.Char(3)
+  taxCategoryId      String?         @map("tax_category_id") @db.Uuid
+  taxCategoryCode    String?         @map("tax_category_code") @db.VarChar(40)
+  taxRate            Decimal         @default(0) @map("tax_rate") @db.Decimal(9, 6)
+  netAmount          Decimal         @map("net_amount") @db.Decimal(24, 4)
+  taxAmount          Decimal         @map("tax_amount") @db.Decimal(24, 4)
+  totalAmount        Decimal         @map("total_amount") @db.Decimal(24, 4)
+  unitCostSnapshot   Decimal?        @map("unit_cost_snapshot") @db.Decimal(20, 6)
+  totalCostSnapshot  Decimal?        @map("total_cost_snapshot") @db.Decimal(24, 6)
+  order              SalesOrder      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  variant            ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  variantUom         VariantUom      @relation(fields: [variantUomId], references: [id], onDelete: Restrict)
+  reservation        StockReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  returnItems        SalesReturnItem[]
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([orderId, lineNumber])
+  @@index([variantId, createdAt])
+  @@map("sales_order_items")
+}
+
+model SalesReturn {
+  id              String            @id @default(uuid()) @db.Uuid
+  orderId         String            @map("order_id") @db.Uuid
+  warehouseId     String            @map("warehouse_id") @db.Uuid
+  returnNumber    String            @unique @map("return_number") @db.VarChar(64)
+  status          SalesReturnStatus @default(POSTED)
+  currency        String            @db.Char(3)
+  subtotal        Decimal           @default(0) @db.Decimal(24, 4)
+  taxAmount       Decimal           @default(0) @map("tax_amount") @db.Decimal(24, 4)
+  totalAmount     Decimal           @default(0) @map("total_amount") @db.Decimal(24, 4)
+  idempotencyKey  String            @unique @map("idempotency_key") @db.VarChar(160)
+  idempotencyPayload Json           @map("idempotency_payload")
+  reason          String?           @db.VarChar(500)
+  createdBy       String            @map("created_by") @db.Uuid
+  order           SalesOrder        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  warehouse       Warehouse         @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  items           SalesReturnItem[]
+  refunds          SalesRefund[]
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([orderId, createdAt])
+  @@map("sales_returns")
+}
+
+model SalesReturnItem {
+  id                 String          @id @default(uuid()) @db.Uuid
+  returnId           String          @map("return_id") @db.Uuid
+  orderItemId        String          @map("order_item_id") @db.Uuid
+  originalMovementId String          @map("original_movement_id") @db.Uuid
+  variantId          String          @map("variant_id") @db.Uuid
+  quantity           Decimal         @db.Decimal(20, 3)
+  unitCostSnapshot   Decimal         @map("unit_cost_snapshot") @db.Decimal(20, 6)
+  totalCostSnapshot  Decimal         @map("total_cost_snapshot") @db.Decimal(24, 6)
+  subtotal           Decimal         @db.Decimal(24, 4)
+  taxAmount          Decimal         @map("tax_amount") @db.Decimal(24, 4)
+  totalAmount        Decimal         @map("total_amount") @db.Decimal(24, 4)
+  salesReturn        SalesReturn     @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  orderItem          SalesOrderItem  @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  variant            ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([returnId, orderItemId])
+  @@index([orderItemId])
+  @@index([variantId])
+  @@map("sales_return_items")
+}
+
+model SalesPayment {
+  id                String             @id @default(uuid()) @db.Uuid
+  orderId           String             @map("order_id") @db.Uuid
+  paymentNumber     String             @unique @map("payment_number") @db.VarChar(64)
+  method            SalesPaymentMethod
+  status            SalesPaymentStatus @default(CAPTURED)
+  currency          String             @db.Char(3)
+  amount            Decimal            @db.Decimal(24, 4)
+  refundedAmount    Decimal            @default(0) @map("refunded_amount") @db.Decimal(24, 4)
+  externalReference String?            @map("external_reference") @db.VarChar(160)
+  idempotencyKey    String             @unique @map("idempotency_key") @db.VarChar(160)
+  idempotencyPayload Json              @map("idempotency_payload")
+  receivedBy        String             @map("received_by") @db.Uuid
+  order             SalesOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds           SalesRefund[]
+  receivedAt        DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
+
+  @@index([orderId, receivedAt])
+  @@map("sales_payments")
+}
+
+model SalesRefund {
+  id                String       @id @default(uuid()) @db.Uuid
+  paymentId         String       @map("payment_id") @db.Uuid
+  returnId          String       @map("return_id") @db.Uuid
+  refundNumber      String       @unique @map("refund_number") @db.VarChar(64)
+  status            String       @default("POSTED") @db.VarChar(12)
+  currency          String       @db.Char(3)
+  amount            Decimal      @db.Decimal(24, 4)
+  idempotencyKey    String       @unique @map("idempotency_key") @db.VarChar(160)
+  idempotencyPayload Json        @map("idempotency_payload")
+  reason            String?      @db.VarChar(500)
+  refundedBy        String       @map("refunded_by") @db.Uuid
+  payment           SalesPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  salesReturn       SalesReturn  @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  refundedAt        DateTime     @default(now()) @map("refunded_at") @db.Timestamptz(3)
+
+  @@index([paymentId, refundedAt])
+  @@index([returnId, refundedAt])
+  @@map("sales_refunds")
 }
 
 model OpeningStockSession {
@@ -824,6 +1042,7 @@ model TaxCategory {
   description String?      @db.VarChar(255)
   status      RecordStatus @default(ACTIVE)
   rates       TaxRate[]
+  variants    ProductVariant[]
   createdAt   DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
   updatedAt   DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
 
@@ -843,6 +1062,7 @@ model TaxProfile {
   validTo            DateTime? @db.Timestamptz(3)         @map("valid_to")
   store              Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
   rates              TaxRate[]
+  salesOrders        SalesOrder[]
   createdAt          DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
   updatedAt          DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
 

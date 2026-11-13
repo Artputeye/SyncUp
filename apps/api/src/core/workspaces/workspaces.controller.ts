@@ -16,8 +16,13 @@ export class WorkspacesController {
   }
 
   @Post()
-  create(@Body() body: { slug: string; name: string }, @Req() request: AuthenticatedRequest) {
+  create(@Body() body: { slug: string; name: string; type: "POS" | "ONLINE" }, @Req() request: AuthenticatedRequest) {
     return this.workspaces.create({ ...body, ownerUserId: request.user.userId });
+  }
+
+  @Get(":workspaceId/navigation")
+  navigation(@Param("workspaceId") workspaceId: string, @Req() request: AuthenticatedRequest) {
+    return this.workspaces.getNavigation(request.user.userId, workspaceId);
   }
 
   @Get(":workspaceId/members")

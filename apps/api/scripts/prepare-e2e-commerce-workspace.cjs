@@ -58,7 +58,7 @@ async function main() {
     const provisioning = new WorkspaceProvisioningService(db, new TenantMigrationRunner());
     const workspaces = new WorkspacesService(db, provisioning);
     const workspace = await workspaces.create({
-      slug, name: "E2E Commerce Workspace", ownerUserId: userRows.OWNER.id
+      slug, name: "E2E Commerce Workspace", type: "POS", ownerUserId: userRows.OWNER.id
     });
     if (workspace.status !== "ACTIVE") throw new Error("E2E workspace provisioning did not reach ACTIVE.");
 

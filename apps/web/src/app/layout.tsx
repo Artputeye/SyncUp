@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import "./home.css";
+import "./product-media.css";
 
 export const metadata: Metadata = {
   title: "SyncUp | Your work, connected",

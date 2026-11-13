@@ -7,6 +7,11 @@ datasource db {
   url      = env("CONTROL_DATABASE_URL")
 }
 
+enum WorkspaceType {
+  POS
+  ONLINE
+}
+
 enum WorkspaceStatus {
   PROVISIONING
   ACTIVE
@@ -42,14 +47,20 @@ model User {
 }
 
 model Workspace {
-  id          String             @id @default(uuid()) @db.Uuid
-  slug        String             @unique @db.VarChar(48)
-  name        String             @db.VarChar(160)
-  status      WorkspaceStatus    @default(PROVISIONING)
-  database    WorkspaceDatabase?
-  memberships Membership[]
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
+  id                         String             @id @default(uuid()) @db.Uuid
+  slug                       String             @unique @db.VarChar(48)
+  name                       String             @db.VarChar(160)
+  type                       WorkspaceType?     @map("type")
+  provisioningProfileId      String?            @map("provisioning_profile_id") @db.VarChar(120)
+  provisioningProfileVersion String?            @map("provisioning_profile_version") @db.VarChar(40)
+  provisioningStartedAt      DateTime?          @map("provisioning_started_at")
+  provisionedAt              DateTime?          @map("provisioned_at")
+  provisioningError          String?            @map("provisioning_error") @db.Text
+  status                     WorkspaceStatus    @default(PROVISIONING)
+  database                   WorkspaceDatabase?
+  memberships                Membership[]
+  createdAt                  DateTime           @default(now()) @map("created_at")
+  updatedAt                  DateTime           @updatedAt @map("updated_at")
 
   @@map("workspaces")
 }

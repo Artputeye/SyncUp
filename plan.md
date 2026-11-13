@@ -1,1053 +1,899 @@
-# SyncUp POS & Commerce — Product Roadmap
+# SyncUp — Product & Engineering Master Plan
 
-> เป้าหมาย: พัฒนา SyncUp ให้เป็นระบบ Omnichannel รองรับ POS หน้าร้านและร้านค้าออนไลน์ ใช้สินค้า ราคา สต๊อก ลูกค้า คำสั่งซื้อ และต้นทุนชุดเดียวกัน ลูกค้าทั่วไปเข้าดูสินค้าได้โดยไม่ต้อง Login
->
-> สถานะเริ่มต้น: วางแผน (ยังไม่ถือว่าฟีเจอร์เหล่านี้พัฒนาแล้ว)
-
-การตัดสินใจล่าสุด 2026-11-02: Commerce Core รองรับ Opening Stock และ Direct Receiving โดยไม่บังคับ Supplier/Purchase Order; Opening Stock Post ได้หนึ่ง Session ต่อ Warehouse; Quantity รองรับจำนวนเต็มและทศนิยมทุกหน่วยสูงสุด 3 ตำแหน่ง; รองรับ Custom UOM/Unit Conversion และตั้งราคาขายแยกตามหน่วย เช่น เบียร์ขายเป็นขวดและยกลัง; ทั้งคู่ Post ผ่าน Stock Ledger และ Moving Weighted Average
-> วิธีทำงาน: ทำทีละ Phase ปิดงานและทดสอบก่อนเริ่ม Phase ถัดไป
+**ฉบับ:** 2.10
+**ปรับปรุงล่าสุด:** 2026-11-13
+**สถานะ:** Architecture direction approved for planning; implementation is staged
+**หลักการสูงสุด:** POS และ Online เป็นคนละ Workspace ที่แยกขอบเขตธุรกิจและข้อมูลอย่างเด็ดขาด
 
 ---
 
-## 1. Product vision และขอบเขต
+## 0. เป้าหมายของเอกสาร
 
-### พื้นที่ใช้งาน 3 ส่วน
+เอกสารนี้เป็นแผนหลักฉบับใหม่ของ SyncUp ใช้แทน roadmap เดิมที่วาง POS และ Online เป็น Omnichannel ภายใน Workspace/ชุดข้อมูลเดียวกัน
 
-1. **Public website / Online Store** — ลูกค้าเข้าชมร้านและสินค้าได้โดยไม่ Login ดูรายละเอียด ตัวเลือกสินค้า ราคา และสั่งซื้อแบบ Guest ใน Phase ถัดไป
-2. **Workspace Admin** — เจ้าของร้าน/พนักงาน Login เพื่อจัดการสินค้า ราคา สต๊อก คำสั่งซื้อ ลูกค้า ภาษี รายงาน และตั้งค่าร้าน
-3. **POS** — หน้าขายหน้าร้าน เน้นความเร็ว รองรับค้นหา/สแกน Barcode รับชำระเงิน พิมพ์ใบเสร็จ และใช้สต๊อกร่วมกับ Online
+เป้าหมายคือสร้างแพลตฟอร์มที่มีผลิตภัณฑ์ธุรกิจ 2 ระบบแยกจากกัน:
 
-### หลักการออกแบบ
+1. **SyncUp POS** — ระบบขายหน้าร้าน
+2. **SyncUp Online** — ระบบร้านค้าออนไลน์
 
-- POS และ Online ใช้ Product Catalog, Inventory, Pricing, Customer และ Order ชุดเดียวกัน
-- ลูกค้าไม่ต้องมีบัญชีเพื่อดูสินค้า และรองรับ Guest Checkout
-- ข้อมูลธุรกิจอยู่ใน Tenant Database ของ Workspace ตามสถาปัตยกรรม Multi-workspace ปัจจุบัน
-- API ทุกตัวต้องตรวจ Workspace Membership และ Permission ฝั่ง Server ห้ามเชื่อ Workspace ID จาก Browser เพียงอย่างเดียว
-- แยกยอดขายสุทธิ ภาษี ส่วนลด ต้นทุน กำไร และค่าธรรมเนียมให้ตรวจสอบย้อนหลังได้
-- เก็บ Stock Movement และรายการการเงินเป็น Ledger ไม่ลบ/แก้ประวัติธุรกรรมเดิมโดยตรง
-- ใช้ Decimal สำหรับเงินและ Quantity ทุกหน่วย; Quantity เก็บ PostgreSQL NUMERIC(20,3)/Prisma Decimal รองรับทศนิยมสูงสุด 3 ตำแหน่ง ห้ามใช้ Float/Double
-- ออกแบบให้รองรับหลายสาขาตั้งแต่ต้น แม้ MVP เปิดใช้สาขาเดียว
-- Public API ส่งเฉพาะข้อมูลที่เผยแพร่ ห้ามส่งต้นทุนหรือข้อมูลภายใน
-- ยกเลิก/คืนเงิน/คืนสินค้า ต้องมีรายการย้อนกลับและ Audit Trail
-- Procurement (PR/PO/รับสินค้า/Invoice) และ Accounting (AP/AR/GL) เป็น Optional Modules เปิดใช้แยกกันได้ต่อ Workspace; Commerce Core ต้องทำงานได้แม้ไม่เปิดโมดูลเหล่านี้
+ทั้งสองระบบใช้ Platform กลางและ Source Code บางส่วนร่วมกันได้ แต่ไม่ใช้ Business Workspace, Tenant Database, Catalog, Stock, Order, Payment หรือวงจรปฏิบัติงานร่วมกัน
 
-### ไม่ทำใน MVP
+เอกสารนี้กำหนด Target Architecture, ขอบเขตผลิตภัณฑ์, ลำดับพัฒนา, วิธีเปลี่ยนจากระบบเดิม และเงื่อนไขก่อน Production
 
-- Marketplace ภายนอกและการ Sync ออเดอร์อัตโนมัติ
-- ระบบบัญชีเต็มรูปแบบ/GL/ปิดงบ
-- E-Tax Invoice / e-Receipt Integration
-- CRM Automation/สะสมแต้มขั้นสูง
-- Multi-currency / Multi-country Tax
-- Offline POS แบบเต็มรูปแบบ
-- Native Mobile App
+> การแก้ไขแผนนี้ไม่ใช่การอนุมัติให้เปลี่ยน Workspace จริง, สร้างฐานข้อมูล, ย้ายข้อมูล, Apply Migration, เปลี่ยน RBAC หรือ Deploy
 
 ---
 
-## 2. โครงสร้างหน้าเป้าหมาย
+## 1. Product Vision
 
-### Public (ไม่ต้อง Login)
-- / — หน้าแนะนำ SyncUp หรือหน้าเลือก/ค้นหาร้าน (รอตัดสินใจ)
-- /s/[storeSlug] — หน้าแรกของร้าน
-- /s/[storeSlug]/products — รายการสินค้า/ตัวกรอง
-- /s/[storeSlug]/products/[productSlug] — รายละเอียดสินค้า/Variant
-- /s/[storeSlug]/cart — ตะกร้า
-- /s/[storeSlug]/checkout — Guest Checkout
-- /s/[storeSlug]/orders/[publicOrderToken] — ติดตาม Order ด้วย Token ที่เดายาก
-- /login — เข้าสู่ระบบพนักงาน/เจ้าของร้าน (รองรับ Google Sign-In ตามนโยบายที่กำหนด)
-- /forgot-password — ขอรีเซ็ตรหัสผ่านด้วยอีเมล
-- /reset-password/[token] — ตั้งรหัสผ่านใหม่ด้วย Token แบบใช้ครั้งเดียว
+### 1.1 SyncUp Platform
 
-### Workspace Admin
-- /workspaces — เลือก Workspace
-- /workspace/[slug] — Dashboard
-- /workspace/[slug]/products — สินค้า/หมวดหมู่
-- /workspace/[slug]/inventory — สต๊อก/ประวัติ
-- /workspace/[slug]/orders — คำสั่งซื้อทุกช่องทาง
-- /workspace/[slug]/customers — ลูกค้า
-- /workspace/[slug]/reports — ยอดขาย/กำไร/ภาษี
-- /workspace/[slug]/settings — ร้าน ภาษี สาขา ช่องทางขาย ผู้ใช้งาน
+SyncUp เป็นแพลตฟอร์ม Multi-Workspace สำหรับผู้ประกอบการและองค์กร โดยผู้ใช้หนึ่งบัญชีสามารถเป็นสมาชิกได้หลาย Workspace แต่ละ Workspace เป็นพื้นที่ธุรกิจที่แยกจากกันโดยสมบูรณ์
 
-### POS
-- /workspace/[slug]/pos — หน้าขาย
-- /workspace/[slug]/pos/shifts — เปิด/ปิดกะและสรุปเงินสด
-- /workspace/[slug]/pos/receipts/[id] — ใบเสร็จ/พิมพ์ซ้ำตามสิทธิ์
+ตัวอย่างการใช้งาน:
+- เจ้าของกิจการใช้บัญชีเดียว Login แล้วเลือกเข้า POS Workspace
+- เจ้าของคนเดิมสามารถเป็นสมาชิก Online Workspace อีกแห่งหนึ่งได้
+- พนักงาน Cashier ของ POS ไม่ได้สิทธิ์เข้าถึง Online Workspace โดยอัตโนมัติ
+- สินค้า SKU, ราคา, สต๊อก, ลูกค้า และยอดขายของสอง Workspace ไม่เชื่อมกัน เว้นแต่มี Integration ที่เปิดใช้งานอย่างชัดเจนในอนาคต
 
-> URL เป็นข้อเสนอ ปรับตาม Route Convention จริงได้ แต่ต้องแยก Public, Admin และ POS ชัดเจน
+### 1.2 ผลิตภัณฑ์ที่อยู่ในขอบเขต
 
----
-
-## 3. Roadmap ตามลำดับความสำคัญ
-
-- **P0 — Foundation/Blocker:** ต้องทำก่อน เป็นฐานของระบบ
-- **P1 — MVP:** จำเป็นต่อการเปิดร้านและเริ่มขาย
-- **P2 — Operational:** ทำให้การปฏิบัติงานครบขึ้น
-- **P3 — Advanced:** ส่วนขยายหลัง MVP และผ่านการใช้งานจริง
-
-### Phase 0 — Product decisions & Foundation audit (P0)
-
-- [x] 0.1 ตรวจสถานะ Auth, Workspace Provisioning, Tenant DB Registry และ RBAC — Read-only audit completed 2026-11-05; partial pass and remaining gaps recorded in `docs/architecture/foundation-audit-2026-11-05.md`.
-- [ ] 0.1a เพิ่ม Forgot Password/Password Reset สำหรับบัญชีผู้ใช้: ขอรีเซ็ตผ่านอีเมล, ตอบกลับแบบไม่เปิดเผยว่ามีบัญชีหรือไม่, ใช้ Token แบบสุ่มที่เก็บในรูป Hash มีวันหมดอายุและใช้ได้ครั้งเดียว, จำกัดอัตราการขอ, บันทึก Audit และกำหนดนโยบาย Session หลังเปลี่ยนรหัสผ่าน
-- [ ] 0.1b เพิ่ม Google Sign-In สำหรับพนักงาน/เจ้าของร้านผ่าน OAuth 2.0 / OpenID Connect: ตรวจสอบ ID Token ฝั่ง Server (issuer, audience, signature, expiry, nonce/state), จับคู่บัญชีด้วย Google subject ที่คงที่ ไม่ใช้ email เป็นตัวระบุหลัก, กำหนดขั้นตอนเชื่อมบัญชีเดิม/ป้องกัน Account Takeover, ตรวจ Workspace Membership/RBAC หลัง Login, รองรับ callback/redirect allowlist, ปิดการใช้ implicit flow และบันทึก Audit; เก็บ Client Secret ฝั่ง Server เท่านั้น
-- [ ] 0.2 ทำให้ API Boot ผ่านทุก Module และมี Smoke Test
-- [x] 0.3 ยืนยันรูปแบบธุรกิจ: หนึ่ง Workspace มีหลายร้าน และแต่ละร้านมีหลายสาขาได้
-- [x] 0.4 กำหนดสกุลเงินหลัก THB และ timezone Asia/Bangkok เป็นค่าเริ่มต้น (สามารถกำหนดต่อ Store)
-- [x] 0.5 VAT ตั้งค่าได้แยกตาม Store และรองรับราคาแบบรวม/ไม่รวม VAT
-- [x] 0.6 ใช้ Moving Weighted Average โดยคำนวณแยก Variant + Warehouse
-- [x] 0.7 กำหนดสถานะ Order, Payment, Fulfillment, Return และ Stock Movement
-- [x] 0.7a รองรับ Partial Payment/Deposit ตั้งแต่ MVP; Order มีหลาย Payment, paidTotal/balanceDue/paymentStatus และ Idempotency
-- [x] 0.7b Tax Rounding ระดับ Document Level ด้วย HALF_UP; เก็บ Tax Snapshot และคงค่าเดิมสำหรับเอกสารเก่า
-- [x] 0.7c Partial Return อ้าง OrderItem เดิม; แยก returnQuantity/restockQuantity และคำนวณคืนเงินจากราคา/ส่วนลด/ภาษี Snapshot
-- [x] 0.7d Return UOM Snapshot และ Default Return Cost Policy ระบุใน ERD/API; รอ Accounting Review ก่อน Production
-- [x] 0.7e TaxCategory/TaxRate effective date และ OrderTaxLine calculation snapshots ระบุใน ERD/API
-- [ ] 0.8 กำหนดเลขเอกสารแยกตามสาขา/ปี/ประเภทเอกสาร
-- [ ] 0.9 กำหนด Permission Matrix: Owner, Admin, Manager, Cashier, Inventory Staff
-- [ ] 0.10 ทบทวน ERD Draft ใน docs/architecture/commerce-erd.md และทำ API Contract ก่อนสร้าง Business Tables (รวม StoreProductVariant, shared Product Master, Default Branch/Warehouse, Opening Stock และ Direct Receiving)
-- [ ] 0.11 กำหนด Backup/Restore Tenant DB และ Audit Log
-- [ ] 0.12 ยืนยัน Public URL: เริ่มด้วย /s/{storeSlug} แล้วค่อยเพิ่ม Custom Domain
-- [ ] 0.13 ออกแบบ Tenant Prisma Schema/Client แยกจาก Control Prisma Schema; Tenant Runtime ใช้ Client ที่ generate จาก Tenant schema เท่านั้น
-- [ ] 0.14 ออกแบบ Stock Adjustment CSV Import/Export (OWNER only): Template/Snapshot, Preview, row validation, stale snapshot, atomic commit, idempotency และ audit
-- [ ] 0.15 ทบทวน Tenant migration strategy ให้รองรับการ Provision/Migrate ทุก Workspace โดย Runtime DB role ไม่มีสิทธิ์ DDL
-- [ ] 0.9 กำหนด Permission Matrix: Owner, Admin, Manager, Cashier, Inventory Staff
-- [ ] 0.10 ทบทวน ERD Draft ใน docs/architecture/commerce-erd.md และทำ API Contract ก่อนสร้าง Business Tables (รวม StoreProductVariant, shared Product Master, Default Branch/Warehouse, Opening Stock และ Direct Receiving)
-- [ ] 0.11 กำหนด Backup/Restore Tenant DB และ Audit Log
-- [ ] 0.12 ยืนยัน Public URL: เริ่มด้วย /s/{storeSlug} แล้วค่อยเพิ่ม Custom Domain
-
-**เกณฑ์ผ่าน:** API และ Workspace ใช้งานได้จริง ขอบเขตธุรกิจชัด มี ERD/สถานะเอกสาร/Permission ที่เป็นข้อกำหนดเดียวกัน
-
-### Phase 1 — Core Store & Product Catalog (P0 → P1)
-
-**Backend / Data**
-- [ ] 1.1 สร้าง Tenant Module: store
-- [ ] 1.2 ข้อมูลร้าน: ชื่อ โลโก้ คำอธิบาย ที่อยู่ ช่องทางติดต่อ สถานะเผยแพร่
-- [ ] 1.3 Branch: สร้าง Default Branch `สำนักงานใหญ่` อัตโนมัติเมื่อสร้าง Store; Store มี Default Branch ได้หนึ่งแห่ง
-- [ ] 1.4 Store-specific Categories และลำดับแสดงผล (StoreCategory / StoreProductCategory)
-- [ ] 1.5 Product และ Product Variant (SKU แยกตามสี/ขนาด)
-- [ ] 1.5a StoreProductVariant: เลือกเปิดขาย/เผยแพร่เป็นราย Variant ต่อ Store
-- [ ] 1.6 Barcode, SKU, รูปภาพ และรายละเอียดสินค้า
-- [ ] 1.6a UnitOfMeasure ระดับ Workspace: หน่วยเริ่มต้น + Custom UOM (ชื่อ/ชื่อย่อ/dimension/decimalPlaces 0–3)
-- [ ] 1.6b Variant base UOM + VariantUOM conversion factor; หน่วยขาย/รับซื้อกำหนดต่อ Variant
-- [ ] 1.6c ProductPrice แยกราคาตามหน่วยขายของ Variant เช่น เบียร์ 1 ขวด 40 บาท / 1 ลัง 450 บาท; POS/Online เลือกหน่วยขายและแปลงสต๊อกเป็นหน่วยฐาน
-- [ ] 1.6d ProductImage/VariantImage: รูปหลัก รูปแกลเลอรี รูปเฉพาะ Variant, sortOrder และ altText
-- [ ] 1.6e Bulk Image Upload ผ่าน Folder/ZIP สำหรับ ADMIN/OWNER; Mapping ด้วย Filename หรือ Manifest CSV (Product ID/Variant ID/SKU), Preview, validation, checksum, staging storage และ Audit Trail
-- [ ] 1.6f Public Store แสดงเฉพาะรูปที่เผยแพร่แล้ว; ป้องกันไฟล์อันตราย, path traversal และ archive bomb
-- [ ] 1.7 แยกราคาขาย ราคาทุน และสถานะภาษี
-- [ ] 1.8 Product Status: Draft, Active, Archived
-- [ ] 1.9 API CRUD พร้อม Validation, Pagination, Search และ Permission
-- [ ] 1.10 Audit Log สำหรับสร้าง/แก้ไข/ปิดใช้งานสินค้า
-
-**Admin UI**
-- [ ] 1.11 หน้า Store Settings เบื้องต้น
-- [ ] 1.12 หน้ารายการสินค้า ค้นหา กรอง แบ่งหน้า
-- [ ] 1.13 หน้าสร้าง/แก้ไขสินค้าและ Variant
-- [ ] 1.14 จัดการหมวดหมู่
-- [ ] 1.15 อัปโหลดรูปภาพ พร้อมจำกัดชนิด/ขนาดไฟล์
-
-**Public Store**
-- [ ] 1.16 ปรับหน้า / เป็น Public Landing ตามข้อสรุป
-- [ ] 1.17 ทำ /s/[storeSlug] ให้เปิดได้โดยไม่ Login
-- [ ] 1.18 หน้ารายการสินค้าและรายละเอียดสินค้า
-- [ ] 1.19 แสดงเฉพาะสินค้าที่ Active และ Published
-- [ ] 1.20 SEO Metadata, Open Graph, Sitemap และ Responsive Layout
-
-**เกณฑ์ผ่าน:** ร้านเพิ่มสินค้า/หมวดหมู่ได้ บุคคลทั่วไปดูร้านและสินค้าได้โดยไม่ Login และไม่เห็นต้นทุนหรือข้อมูลภายใน
-
-### Phase 2 — Inventory & Costing (P0 → P1)
-
-- [ ] 2.1 Warehouse ผูกกับสาขา; สร้าง Default Warehouse `คลังหลัก` อัตโนมัติพร้อม Default Branch เมื่อสร้าง Store; แต่ละ Branch มี Default Warehouse ได้หนึ่งแห่ง
-- [ ] 2.2 Stock Balance แยก Product Variant + Warehouse
-- [ ] 2.3 Stock Movement Ledger: รับเข้า ขาย จอง ยกเลิกจอง คืน ปรับปรุง โอนคลัง
-- [ ] 2.4 Stock Adjustment พร้อมเหตุผลและผู้อนุมัติ
-- [ ] 2.5 Stock Transfer ระหว่างคลัง พร้อมสถานะส่ง/รับ
-- [ ] 2.6 Stock Reservation สำหรับ Checkout/Order ที่ยังไม่ชำระ
-- [ ] 2.7 ป้องกันขายเกินสต๊อกด้วย DB Transaction/Lock
-- [ ] 2.8 นโยบายสินค้าติดลบ (ค่าเริ่มต้นไม่อนุญาต ยกเว้นผู้มีสิทธิ์)
-- [ ] 2.9 ต้นทุน Moving Weighted Average และ Cost Snapshot ในรายการขาย
-- [x] 2.10 Opening Stock: บันทึกยอดตั้งต้นเป็น Session ต่อ Warehouse พร้อม quantity และ unit cost; แต่ละ Warehouse Post ได้เพียงหนึ่ง Session (API/UI/E2E implemented 2026-11-10)
-- [ ] 2.10a Direct Receiving: รับสินค้าเข้า Warehouse ได้โดยไม่ต้องมี Supplier/PO; Supplier เป็นข้อมูลอ้างอิงเสริม
-- [ ] 2.10b ทั้งสองวิธีสร้าง Stock Ledger และคำนวณ Moving Weighted Average แบบ Atomic + Idempotent; หลัง Post แก้ย้อนหลังด้วย Reversal/Adjustment เท่านั้น
-- [ ] 2.10c Quantity ทุกหน่วยรองรับจำนวนเต็ม/ทศนิยมสูงสุด 3 ตำแหน่ง; ใช้ Decimal และ Validation สอดคล้องกันทุก API/ตาราง
-- [ ] 2.10d Stock Ledger/Balance เก็บหน่วยฐานเท่านั้น; แปลงจากหน่วยขาย/รับซื้อก่อนบันทึก พร้อม Snapshot หน่วยและ Conversion Factor ในรายการขาย
-- [ ] 2.10e Stock Adjustment CSV: OWNER ดาวน์โหลด Stock Snapshot/Template, Upload CSV, Preview Validation และ Commit แบบ Atomic/Idempotent; ตรวจ Stale Snapshot และ Audit Trail
-- [ ] 2.10f CSV Import Batch/Rows เก็บ checksum, uploader, status, row-level errors และผล Commit; ป้องกัน CSV Formula Injection และกำหนด file/row limits
-- [ ] 2.11 หน้าสต๊อกคงเหลือ/ต่ำกว่าจุดสั่งซื้อ/ประวัติเคลื่อนไหว
-- [ ] 2.12 รายงานมูลค่าสต๊อก ณ วันที่กำหนด
-- [ ] 2.13 ทดสอบ Ledger, Reconciliation และ Concurrent Sale
-
-**เกณฑ์ผ่าน:** ทุกการเปลี่ยนสต๊อกมี Ledger ยอดคงเหลือตรวจสอบย้อนกลับได้ และการขายพร้อมกันไม่ทำให้สต๊อกผิดพลาด
-
-### Phase 3 — Sales, Orders & Payments Core (P1)
-
-- [ ] 3.1 Order และ Order Items แบบ Snapshot ชื่อ/SKU/ราคา/ภาษี/ส่วนลด/ต้นทุน ณ เวลาขาย
-- [ ] 3.2 Order Number แยกช่องทาง/สาขาตามกติกา
-- [ ] 3.3 Order Status และ State Transition ที่ตรวจสอบได้
-- [ ] 3.4 ส่วนลดระดับรายการและระดับบิล
-- [ ] 3.5 ค่าจัดส่งและค่าบริการแยกจากสินค้า
-- [ ] 3.6 Payment และ Payment Transaction แยกจาก Order
-- [ ] 3.7 เงินสด โอน/QR และบันทึกผลชำระผ่านผู้ให้บริการ
-- [ ] 3.8 Payment Provider Adapter ไม่ผูก Business Logic กับผู้ให้บริการรายเดียว
-- [ ] 3.9 Idempotency สำหรับสร้าง Order และรับ Payment Webhook
-- [ ] 3.10 เอกสารยกเลิก Order, Void และ Refund
-- [ ] 3.11 Reservation Timeout และคืนสต๊อกเมื่อชำระไม่สำเร็จ/หมดเวลา
-- [ ] 3.12 หน้ารวมคำสั่งซื้อ ค้นหา กรอง และดูรายละเอียด
-- [ ] 3.13 Audit Trail สำหรับสถานะและธุรกรรมการเงิน
-
-**เกณฑ์ผ่าน:** สร้าง Order รับชำระ ยกเลิก คืนเงินได้ โดย Order, Payment และ Inventory ไม่ขัดแย้งกัน
-
-### Phase 4 — POS MVP (P1)
-
-- [ ] 4.1 POS Permission และเลือกสาขา/คลัง
-- [ ] 4.2 Cashier Shift: เปิดกะ ใส่เงินตั้งต้น ปิดกะ
-- [ ] 4.3 หน้าขาย Responsive สำหรับ Desktop/Tablet
-- [ ] 4.4 ค้นหาสินค้าด้วยชื่อ SKU และ Barcode
-- [ ] 4.5 เพิ่ม/ลดจำนวน แก้รายการ และพักบิล
-- [ ] 4.6 คำนวณส่วนลด ภาษี ยอดสุทธิ และเงินทอน
-- [ ] 4.7 เงินสดและ QR/โอนแบบบันทึกผล
-- [ ] 4.8 ใบเสร็จอย่างย่อและพิมพ์ผ่าน Browser
-- [ ] 4.9 พิมพ์ซ้ำโดยบันทึกผู้สั่งพิมพ์และเวลา
-- [ ] 4.10 ตัดสต๊อกตามกติกา Order/Payment
-- [ ] 4.11 สรุปยอดขายตามกะ แยกช่องทางชำระ และเงินสดที่ควรมี
-- [ ] 4.12 Void/Refund ตาม Permission
-- [ ] 4.13 ทดสอบ Double Submit และการเชื่อมต่อหลุดระหว่างบันทึก
-
-**เกณฑ์ผ่าน:** พนักงานเปิดกะ ขาย รับเงิน พิมพ์ใบเสร็จ ปิดกะ และตรวจยอดได้จริง ยอดขายกับสต๊อกตรงกัน
-
-### Phase 5 — Online Store Checkout (P1)
-
-- [ ] 5.1 ตะกร้าสินค้า Guest ไม่ต้อง Login
-- [ ] 5.2 ตรวจราคาและสต๊อกจาก Server ใหม่ก่อนยืนยัน Order
-- [ ] 5.3 Checkout เก็บชื่อ เบอร์โทร อีเมล และที่อยู่เท่าที่จำเป็น
-- [ ] 5.4 ที่อยู่จัดส่งและข้อมูลผู้รับ
-- [ ] 5.5 วิธีชำระเงินที่ร้านเปิดใช้งาน
-- [ ] 5.6 สร้าง Online Order และส่งเข้าหลังบ้าน
-- [ ] 5.7 Public Order Tracking Token แบบสุ่มเดายาก ห้ามใช้เลข Order เป็นสิทธิ์เข้าถึง
-- [ ] 5.8 แจ้งยืนยัน Order/ชำระเงินผ่าน Email หรือช่องทางที่เลือก
-- [ ] 5.9 สถานะเตรียมสินค้า จัดส่ง สำเร็จ และยกเลิก
-- [ ] 5.10 จัดการขนส่ง เลข Tracking และผู้ให้บริการ
-- [ ] 5.11 ป้องกัน Bot/Spam และจำกัดอัตรา Checkout
-- [ ] 5.12 Privacy Notice, Consent และนโยบายเก็บข้อมูลลูกค้า
-- [ ] 5.13 บันทึกข้อมูลผู้ซื้อเป็น Customer Profile แบบ Guest-first: ชื่อ เบอร์โทร อีเมล และที่อยู่จัดส่ง/ออกใบเสร็จเท่าที่จำเป็น; ลูกค้าไม่ต้องสมัครบัญชีก่อนสั่งซื้อ
-- [ ] 5.14 เชื่อม Order กับ Customer แบบไม่สร้างข้อมูลซ้ำโดยไม่จำเป็น; ตรวจ/รวม Customer จากข้อมูลติดต่อด้วยกติกาที่ชัดเจนและไม่เปิดเผยข้อมูลข้ามผู้ใช้
-- [ ] 5.15 ตรวจสอบการชำระเงินสำเร็จอัตโนมัติจาก Payment Gateway ผ่าน Webhook ที่ตรวจลายเซ็น/แหล่งที่มาและตรวจสอบสถานะกับ Provider เมื่อจำเป็น; ห้ามเชื่อค่าจากหน้า Redirect หรือ Browser เพียงอย่างเดียว
-- [ ] 5.16 ป้องกัน Webhook ซ้ำ/ผิดลำดับด้วย Idempotency และการตรวจ Provider Event ID; บันทึก Payment Transaction, เวลา, จำนวนเงิน, สกุลเงิน และผลตรวจสอบลง Audit Trail
-- [ ] 5.17 เปลี่ยน Payment Status และยืนยัน Order เฉพาะเมื่อยอด/สกุลเงิน/Order reference ตรงกันและตรวจสอบสำเร็จ; กรณีรอตรวจสอบ ล้มเหลว หรือยอดไม่ตรงให้คงสถานะรอตรวจสอบและแจ้งผู้ดูแล
-- [ ] 5.18 ทดสอบ Payment Pending/Success/Failure/Expired/Refund, Webhook Retry, Event ปลอม, จำนวนเงินไม่ตรง และการแจ้งสถานะซ้ำ; แจ้งลูกค้าเมื่อยืนยันผลสำเร็จจริงเท่านั้น
-
-**เกณฑ์ผ่าน:** ลูกค้าเข้าร้านโดยไม่ Login เลือกสินค้า Checkout แบบ Guest บันทึกข้อมูลผู้ซื้อเท่าที่จำเป็น และติดตาม Order ได้; ร้านเห็น Order ในหลังบ้าน; ระบบตรวจยืนยันการจ่ายเงินสำเร็จอัตโนมัติอย่างปลอดภัยและไม่ยืนยันจาก Redirect เพียงอย่างเดียว; สต๊อกไม่ถูกขายเกิน
-
-### Phase 6 — Tax, Receipts & Profit Reports (P1 → P2)
-
-- [ ] 6.1 Tax Profile ร้าน/สาขา (เลขผู้เสียภาษี ที่อยู่สำนักงานใหญ่/สาขา)
-- [ ] 6.2 Tax Mode: ไม่จด VAT / จด VAT และอัตราภาษีตามวันที่มีผล
-- [ ] 6.3 ราคาสินค้ารวม VAT และไม่รวม VAT
-- [ ] 6.4 แยกยอดก่อนภาษี ภาษี ส่วนลด ค่าจัดส่ง และยอดสุทธิ
-- [ ] 6.5 Tax Snapshot ใน Order/Receipt เพื่อไม่ให้การตั้งค่าใหม่เปลี่ยนเอกสารเก่า
-- [ ] 6.6 ใบเสร็จรับเงินและเอกสารอย่างย่อ POS ตามรูปแบบที่ตรวจสอบแล้ว
-- [ ] 6.7 ออกแบบ Tax Invoice/ใบกำกับภาษีเต็มรูปแบบ ให้ผู้เชี่ยวชาญตรวจสอบก่อนใช้จริง
-- [ ] 6.8 เอกสารลดหนี้/คืนสินค้าและภาษีที่เกี่ยวข้อง
-- [ ] 6.8a Partial Return: ขาย 1 ลัง (12 ขวด) คืน 2 ขวด; รับสต๊อกกลับ 2 ขวด, net sold 10 ขวด และ refund จาก OrderItem/Tax Snapshot เดิม
-- [ ] 6.8b Partial Return สินค้าเสียหาย: คืนเงินได้แต่ restockQuantity=0; ทดสอบคืนหลายครั้งสะสม, ห้ามคืนเกินยอดขาย และ Idempotency
-- [ ] 6.8c Return Post ต้อง atomic ระหว่าง Return, StockMovement, InventoryCost/WAC และ Refund; ทดสอบ ledger reconcile
-- [ ] 6.8d Return Costing: สินค้า SELLABLE รับกลับด้วยต้นทุน unit_cost_snapshot จาก OrderItem เดิมและคำนวณ WAC ใหม่; DAMAGED/UNSELLABLE ไม่เพิ่ม on_hand และต้องบันทึก disposition/write-off
-- [ ] 6.8e Tax Snapshot: ทดสอบ Tax Category/Rate ตาม effective date, Document Level + HALF_UP ต่อ currency minor unit, และไม่เปลี่ยนผล Order เก่าหลังแก้ Tax Profile
-- [ ] 6.9 Sales Summary แยกวัน/เดือน/สาขา/ช่องทาง
-- [ ] 6.10 Gross Profit = ยอดขายสุทธิไม่รวม VAT - ต้นทุนสินค้าที่ขาย
-- [ ] 6.11 แยกส่วนลด คืนสินค้า และกำไรขั้นต้น
-- [ ] 6.12 ค่าใช้จ่ายดำเนินงานและค่าธรรมเนียม Payment/Delivery เพื่อคำนวณ Contribution Profit
-- [ ] 6.13 รายงานภาษีขายและยอดภาษีตามช่วงเวลา
-- [ ] 6.14 Export CSV/XLSX และ Permission รายงาน
-- [ ] 6.15 ทดสอบสูตรด้วยชุดข้อมูลอ้างอิงและคืนสินค้าบางส่วน
-
-**เกณฑ์ผ่าน:** รายงานยอดขาย ต้นทุน กำไรขั้นต้น และภาษีแยกกัน สูตรตรวจสอบได้ เอกสารเก่าไม่เปลี่ยนตามการตั้งค่าใหม่
-
-> ข้อควรระวัง: ระบบช่วยคำนวณและจัดเตรียมข้อมูลภาษีได้ แต่การใช้เอกสารเป็นใบกำกับภาษีตามกฎหมายไทยต้องตรวจสอบรูปแบบและข้อกำหนดกับผู้เชี่ยวชาญ/กรมสรรพากรก่อนเปิดใช้จริง
-
-### Phase 7 — Customers, Purchasing & Replenishment (P2)
-
-- [ ] 7.1 Customer Profile รวม Guest ที่ยินยอมให้เก็บข้อมูล
-- [ ] 7.2 รวมประวัติ POS และ Online ด้วย Customer Identity ที่ปลอดภัย
-- [ ] 7.3 Supplier
-- [ ] 7.4 Purchase Order
-- [ ] 7.5 รับสินค้าเข้าคลังจากเอกสารซื้อ
-- [ ] 7.6 บันทึกต้นทุนซื้อ ค่าขนส่ง และต้นทุนเพิ่มเติมตามนโยบาย
-- [ ] 7.7 คืนสินค้า Supplier
-- [ ] 7.8 Reorder Point และแจ้งเตือนสินค้าใกล้หมด
-- [ ] 7.9 รายงานการซื้อและประวัติ Supplier
-
-### Phase 8 — Omnichannel Operations & Integrations (P2 → P3)
-
-- [ ] 8.1 Order Inbox รวมทุกช่องทาง
-- [ ] 8.2 Channel Adapter สำหรับ Marketplace ตามลำดับความต้องการ
-- [ ] 8.3 ระบบขนส่ง/พิมพ์ใบปะหน้า
-- [ ] 8.4 Payment Gateway และ Webhook Verification
-- [ ] 8.5 Barcode Scanner และ Receipt Printer compatibility
-- [ ] 8.6 Cash Drawer ผ่านเครื่องพิมพ์/อุปกรณ์ที่รองรับ
-- [ ] 8.7 Multi-branch Stock Transfer และเติมสต๊อก
-- [ ] 8.8 Offline POS แบบ Local Queue และ Conflict Resolution (ต้องออกแบบก่อนพัฒนา)
-- [ ] 8.9 Custom Domain และ SSL Automation สำหรับ Online Store
-
-### Phase 9 — Advanced Finance, CRM & Governance (P3)
-
-- [ ] 9.1 ระบบค่าใช้จ่ายและหมวดค่าใช้จ่าย
-- [ ] 9.2 Dashboard กระแสเงินสดและกำไรหลังหักค่าใช้จ่าย
-- [ ] 9.3 Coupon และ Campaign
-- [ ] 9.4 Loyalty / Points / Membership Tier
-- [ ] 9.5 Gift Card / Store Credit
-- [ ] 9.6 Commission พนักงานขาย
-- [ ] 9.7 Demand Forecast และ Stock Replenishment Suggestion
-- [ ] 9.8 E-Tax Invoice / e-Receipt Integration
-- [ ] 9.9 Accounting Export / Integration
-- [ ] 9.10 Advanced Audit, Retention, Data Export และ Privacy Request
-
-### Phase 10 — Optional Procurement & Accounting Modules (P3 — Future / Opt-in)
-
-> โมดูลจัดซื้อและบัญชีเป็นส่วนเสริมที่ Workspace เลือกเปิดหรือไม่เปิดใช้ก็ได้ ไม่เป็น Dependency ของ POS, Online Store, Inventory Core หรือการรับสินค้าเข้าสต๊อกขั้นพื้นฐาน ต้องออกแบบเป็น Module แยก มี Permission, Navigation, API และการตั้งค่าเปิด/ปิดระดับ Workspace
-
-- [ ] 10.1 Module Registry / Feature Entitlement สำหรับเปิด-ปิด Procurement และ Accounting แยกกันต่อ Workspace
-- [ ] 10.2 Purchase Request (PR): ขอซื้อ เสนออนุมัติ และติดตามสถานะ (เปิดใช้ได้อิสระตามนโยบายร้าน)
-- [ ] 10.3 Purchase Order (PO): สร้างจาก PR หรือสร้าง PO โดยตรงได้ รองรับอนุมัติ/ยกเลิก/แก้ไขตามสถานะ
-- [ ] 10.4 Goods Receipt: รับสินค้าจาก PO แบบเต็มจำนวน/บางส่วน และบันทึกส่วนต่าง; การรับสินค้าแบบไม่ใช้ PO ต้องยังทำได้
-- [ ] 10.5 Supplier Invoice / ใบแจ้งหนี้จากผู้ขาย: จับคู่กับ PO และ Goods Receipt, รองรับ Partial Invoice และตรวจยอด/ภาษี
-- [ ] 10.6 Sales Invoice / เอกสารแจ้งหนี้ลูกค้า: ออกเอกสารจาก Order ตาม Workflow และสิทธิ์ที่กำหนด โดยไม่แทนที่ Order/Payment
-- [ ] 10.7 Accounts Payable (AP) / Accounts Receivable (AR): เจ้าหนี้-ลูกหนี้ กำหนดชำระ รับ/จ่ายชำระ และสถานะคงค้าง
-- [ ] 10.8 Chart of Accounts, Journal Entry และ General Ledger (GL) แบบ Double-entry
-- [ ] 10.9 Posting Rules เชื่อม Sales, Payment, Refund, Inventory Cost, Purchase และ Expense ไปยังบัญชี
-- [ ] 10.10 Financial Reports: Trial Balance, General Ledger, Profit & Loss, Balance Sheet และ Cash Flow
-- [ ] 10.11 Period Closing, Fiscal Year, Audit Trail และการล็อกงวดบัญชี
-- [ ] 10.12 Import/Export และ Integration กับโปรแกรมบัญชีภายนอก
-
-**หลักการแยกโมดูล:** หาก Workspace ไม่เปิด Procurement จะยังรับสินค้าเข้าแบบ Direct Receiving/Opening Stock ได้; หากไม่เปิด Accounting ระบบยังขาย รับชำระ จัดการสต๊อก คำนวณต้นทุน และดูรายงานการดำเนินงานได้ตามปกติ โดยไม่สร้าง Journal/GL อัตโนมัติ
-
-**เกณฑ์ผ่าน:** เปิดใช้เฉพาะโมดูลที่ Workspace ต้องการได้ โดยข้อมูลธุรกรรมต้นทางยังเป็น Source of Truth และการเปิดโมดูลภายหลังสามารถ Backfill/Import ตามนโยบายได้โดยไม่แก้ไขประวัติเดิม
-
----
-
-## 4. Domain Modules ที่แนะนำ
-
-แยกเป็น Business Modules ใน Modular Monolith ไม่รวมทุกอย่างไว้ใน Core
-
-| Module | ความรับผิดชอบ |
-|---|---|
-| store | ข้อมูลร้าน สาขา ช่องทางขาย และการเผยแพร่ |
-| catalog | หมวดหมู่ สินค้า Variant SKU Barcode รูปภาพ |
-| pricing | Price List ราคาโปรโมชั่น และส่วนลด |
-| inventory | คลัง Stock Ledger Reservation Transfer Adjustment |
-| purchasing | Supplier Purchase Order และรับสินค้า |
-| sales | Order, Order Item, Fulfillment และ Return |
-| payments | Payment, Refund, Payment Provider |
-| pos | Cashier Shift, Register, POS Workflow, Receipt |
-| customers | Customer Profile และประวัติซื้อ |
-| tax | Tax Profile, Tax Rule, Tax Snapshot และเอกสารภาษี |
-| reports | Sales, Inventory Valuation, Cost, Profit และ Tax Reports |
-| notifications | Email/ข้อความแจ้ง Order และสถานะ |
-| integrations | Marketplace, Shipping, Payment และ Accounting Connectors |
-
-**กติกาขอบเขต Module**
-- Module อื่นเรียกผ่าน Service/API Contract ที่เปิดเผย ไม่เขียนตารางของกันและกันโดยตรง
-- Order ใช้ Application Service/Contract ของ Pricing, Inventory และ Payment
-- รายงานอ่านจาก Snapshot/Ledger หรือ Read Model ไม่แก้ธุรกรรมต้นทาง
-- ทุก Module ประกาศ Manifest, Permission Keys, Navigation และ Migration ตาม Module Contract ของ SyncUp
-
----
-
-## 5. Data Model ที่ต้องออกแบบ (ระดับแนวคิด)
-
-### Store & Catalog
-- Store, Branch, Warehouse
-- Workspace Catalog: Product, ProductVariant, ProductImage, Barcode
-- UnitOfMeasure (Workspace), VariantUOM (หน่วยฐาน/หน่วยขาย/หน่วยรับซื้อและ Conversion Factor)
-- Store-specific assortment: StoreProduct, StoreCategory, StoreProductCategory
-- PriceList, ProductPrice (แยกราคาตามหน่วยขาย)
-
-### Inventory & Cost
-- StockBalance (ยอดคงเหลือเพื่ออ่านเร็ว)
-- StockMovement (Ledger ต้นทาง)
-- StockReservation
-- StockTransfer, StockAdjustment
-- InventoryCostLayer หรือ CostHistory ตามวิธีคิดต้นทุน
-
-### Sales & Payment
-- Order, OrderItem, OrderAddress
-- Payment, PaymentTransaction, Refund
-- Fulfillment, Shipment, Return, ReturnItem
-- Receipt / DocumentSequence
-- CashierShift, CashMovement, POSRegister
-
-### Tax & Reports
-- TaxProfile, TaxRate/TaxRule
-- OrderTaxSnapshot, DocumentTaxSnapshot
-- Expense (ระยะถัดไป)
-- ReportJob / ExportJob (เมื่อข้อมูลมีปริมาณมาก)
-
-> ต้องทำ ERD และ Migration Review ก่อนสร้างตารางจริง โดยเฉพาะ Variant, Stock Ledger, Order Item Snapshot, Payment และ Tax Snapshot
-
----
-
-## 6. กฎธุรกิจสำคัญ
-
-1. **เงิน:** ใช้ Decimal; Tax Rounding ระดับ Document Level และ HALF_UP (THB 2 ตำแหน่ง); เก็บค่าฐาน/ภาษี Snapshot ก่อนและหลังปัด
-2. **VAT:** แยกยอดก่อน VAT, VAT, ยอดรวม และระบุ Inclusive/Exclusive ต่อเอกสาร
-3. **กำไร:** Gross Profit ไม่ใช่ยอดรับเงินลบราคาทุน ต้องหักส่วนลด/คืนสินค้าและไม่รวม VAT ในยอดขายสุทธิ
-4. **ต้นทุน:** เก็บ Cost Snapshot ต่อ Order Item เพื่อให้รายงานย้อนหลังไม่เปลี่ยนเมื่อรับสินค้าใหม่
-5. **สต๊อก:** Stock Movement เป็นหลักฐานต้นทาง; Stock Balance เป็นยอดสรุปที่ Reconcile ได้
-6. **การจอง:** Order ที่ยังไม่ชำระมี Reservation Timeout และคืนสต๊อกอัตโนมัติ
-7. **Concurrency:** ตัด/จองสต๊อกใน DB Transaction พร้อมป้องกันคำขอซ้ำ
-8. **คืนสินค้า:** คืนเข้าสต๊อกหลังตรวจรับและระบุสภาพสินค้า
-9. **ความปลอดภัย:** Public API ส่งเฉพาะข้อมูลเผยแพร่ ไม่ส่งต้นทุน/สต๊อกละเอียด/ข้อมูลลูกค้าภายใน
-10. **Privacy:** Guest Customer เก็บเท่าที่จำเป็น มีนโยบายเก็บ/ลบ/ส่งออก
-11. **Audit:** ปรับราคา ต้นทุน สต๊อก ภาษี Void และ Refund ต้องระบุผู้กระทำ เหตุผล และเวลา
-12. **เลขเอกสาร:** สร้างแบบ Atomic ป้องกันเลขซ้ำเมื่อขายพร้อมกัน
-13. **เวลา:** บันทึก Timestamp เป็น UTC แสดงผลตาม Timezone ร้าน
-14. **Idempotency:** Checkout, Payment Webhook, POS Submit และ Refund ต้องรองรับการส่งซ้ำ
-
----
-
-## 7. Permission เบื้องต้น
-
-| Role | งานหลัก |
-|---|---|
-| Owner | ทุกอย่าง รวมตั้งค่าร้าน ภาษี ผู้ใช้ และรายงานการเงิน |
-| Admin | จัดการระบบร้านและผู้ใช้ตามขอบเขตที่ Owner มอบหมาย |
-| Manager | สินค้า สต๊อก Order อนุมัติปรับปรุง/คืนสินค้า และรายงาน |
-| Cashier | POS เปิด/ปิดกะ ขาย รับชำระ พักบิล และดูรายการตามสิทธิ์ |
-| Inventory Staff | รับเข้า โอนคลัง ปรับสต๊อก และดูต้นทุนตามสิทธิ์ |
-| Accountant | ดูรายงานการเงิน ภาษี เอกสาร และ Export |
-
-ตัวอย่าง granular permission keys: catalog.product.read, catalog.product.write, inventory.adjust.approve, pos.sale.create, sales.refund.approve, reports.profit.read, tax.settings.write
-
----
-
-## 8. Testing, Security & Production Readiness
-
-ทำควบคู่กับทุก Phase
-
-- [ ] Unit Tests: ราคา ส่วนลด VAT ต้นทุน กำไร State Transition, Quantity Decimal (0–3 ตำแหน่ง), Unit Conversion และราคาแยกหน่วย
-- [ ] Integration Tests: ขายสินค้าหน่วยฐาน/หน่วยแพ็ก เช่น เบียร์ 1 ขวดและ 1 ลัง; ตรวจยอดตัดสต๊อกหน่วยฐาน, ราคาแยกหน่วย, WAC และ Order Snapshot
-- [ ] Integration Tests: Order + Payment + Inventory Transaction รวมทดสอบรับเข้า/ขาย/โอน/จองด้วย Quantity ทศนิยมและตรวจ Stock Balance ตรงกัน
-- [ ] Tenant Isolation Tests: Workspace A อ่าน/แก้ Workspace B ไม่ได้
-- [ ] RBAC Tests สำหรับทุก Endpoint ที่เปลี่ยนข้อมูล
-- [ ] Public API Tests ว่าไม่เปิดเผยต้นทุน/ข้อมูลภายใน
-- [ ] Concurrency Tests: Stock Reservation, Payment และ Document Sequence
-- [ ] Idempotency Tests: Double Click และ Webhook Retry
-- [ ] E2E: Admin เพิ่มสินค้า → Public ดูสินค้า → Checkout → Admin จัดการ Order
-- [ ] E2E: POS เปิดกะ → ขาย → ชำระ → ใบเสร็จ → ปิดกะ
-- [ ] Backup/Restore Drill ของ Tenant Database
-- [ ] Auth Security Tests: Forgot Password ไม่เปิดเผยการมีอยู่ของบัญชี, Token หมดอายุ/ใช้ซ้ำ/ถูกแก้ไขต้องใช้ไม่ได้, Rate Limit, Email Delivery Failure และ Session Invalidation ตามนโยบาย
-- [ ] Google Sign-In Tests: ID Token ผิดลายเซ็น/issuer/audience/nonce/หมดอายุ, callback state mismatch, redirect URI ไม่อนุญาต, บัญชี Google ยังไม่เชื่อม/อีเมลซ้ำ, การเชื่อมบัญชีต้องยืนยันเจ้าของบัญชีเดิม, Workspace Membership/RBAC และการยกเลิกสิทธิ์
-- [ ] Rate Limit, CSRF, CORS, Secure Cookie, Input Validation และ Upload Security
-- [ ] Structured Logs, Request ID, Audit Trail และ Error Monitoring
-- [ ] Performance Test: Catalog, Search, Checkout และ POS
-- [ ] Data Retention/Privacy และ Data Export
-- [ ] ตรวจสอบภาษี/เอกสารกับผู้เชี่ยวชาญก่อนใช้งานจริง
-
----
-
-## 9. วิธีทำงานในโปรเจกต์
-
-วงจรการทำงานทีละรายการ:
-
-1. เลือกงานถัดไปที่ยังไม่เสร็จและตรวจ Dependency
-2. สรุป Scope, UX, Data Model, API Contract และ Acceptance Criteria ก่อนแก้โค้ด
-3. ทำ Migration/API/UI เฉพาะงานนั้น
-4. รัน Typecheck, Lint, Unit/Integration Tests ที่เกี่ยวข้อง
-5. ทดสอบ Dev และตรวจ Tenant/RBAC
-6. อัปเดต Checkbox และบันทึก Decision/ข้อจำกัด
-7. Commit เป็นชุดงานที่อธิบายได้ ก่อนเริ่มงานถัดไป
-
-### Definition of Done
-- [ ] Backend Validation และ Authorization ครบ
-- [ ] UI มี Loading, Empty, Error และ Success State
-- [ ] มี Test สำหรับ Business Rules ที่เปลี่ยน
-- [ ] ไม่ทำให้ Module อื่นเสีย
-- [ ] Migration มีแนวทาง deploy และ recovery
-- [ ] เอกสารและ Checkbox ตรงกับความจริง
-
----
-
-## 10. ลำดับงานถัดไป (Next steps)
-
-1. **P0 — Stabilize Foundation:** API Boot ผ่านทุก Module, Login/Session, Workspace Provisioning, Tenant DB Registry และ RBAC ใช้งานจริง พร้อม Smoke Tests
-2. **P0 — Product Decisions:** ยืนยันแล้ว — Workspace มีหลาย Store, Store มีหลาย Branch, Variant, VAT configurable ต่อ Store, Moving Weighted Average, Manual + Gateway Payments
-3. **P0 — Review Domain ERD:** ปรับเป็น Design Review v8 แล้ว; ยืนยัน Catalog กลางระดับ Workspace, SKU unique ทั้ง Workspace, StoreProductVariant, shared Product/Variant Master, Store-specific price/assortment/Category, Default Branch/Warehouse, Opening Stock + Direct Receiving, Quantity Decimal สูงสุด 3 ตำแหน่ง, Custom UOM/Variant Conversion/ราคาขายแยกหน่วย, Partial Payment/Deposit, Tax Document Level + HALF_UP และ Partial Return แล้ว; รอทบทวนรายละเอียดก่อน Migration sign-off
-4. **P0 — API Contracts & Tenant Routing:** Draft v7 อยู่ที่ docs/api/commerce-api-contracts.md; ตรวจ DTO/permission/error/pagination และความสอดคล้องของ Composite Constraints ก่อน Implement
-5. **P0 — Tenant Schema Review & Sign-off:** ตรวจ ERD/API Contract, Composite Constraints, Default Branch/Warehouse, Price History และ Stock Constraints; จากนั้นออกแบบ Test Plan สำหรับ CSV Import, Image Upload และ Tenant Provisioning โดยยังไม่สร้าง/ใช้ Migration จนกว่าจะอนุมัติครบ
-6. **P1 — Build Store + Catalog Admin:** เริ่มหลัง Foundation ผ่านและ ERD ได้รับการอนุมัติ
-7. **P1 — Future Phase: Online Ordering & Payment Verification:** หลัง Catalog, Inventory, Order/Payment Core ผ่านการทบทวน ให้ทำ Guest Checkout, ข้อมูลผู้ซื้อ/ที่อยู่จัดส่ง, Order Tracking และการตรวจยืนยัน Payment Gateway อัตโนมัติด้วย Webhook ที่ตรวจสอบความถูกต้องและรองรับ Idempotency ตาม Phase 5
-
-**ไม่ควรเริ่ม POS หรือรายงานกำไร/ภาษีก่อน Catalog, Inventory Ledger, Order Snapshot และ Costing ผ่านการทบทวน** เพื่อป้องกันการรื้อโครงสร้างข้อมูลภายหลัง
-
----
-
-## 11. Decision Log
-
-| วันที่ | เรื่อง | สถานะ |
+| มิติ | SyncUp POS | SyncUp Online |
 |---|---|---|
-| 2026-11-02 | SyncUp Modular Monolith และ Tenant Database แยกต่อ Workspace | ยึดตาม Architecture ปัจจุบัน |
-| 2026-11-02 | ลูกค้าดู Public Store ได้โดยไม่ Login | ยืนยันตาม Product Goal |
-| 2026-11-02 | POS และ Online ใช้ Catalog/Inventory/Order ชุดเดียวกัน | ข้อเสนอหลัก |
-| 2026-11-02 | เริ่มต้น THB และ Asia/Bangkok; override ได้ระดับ Store | ยืนยันเป็นค่าเริ่มต้น |
-| 2026-11-02 | Moving Weighted Average แยก Variant + Warehouse | ยืนยันแล้ว |
-| 2026-11-02 | Public Store ใช้ /s/{storeSlug} ก่อน Custom Domain | ข้อเสนอเริ่มต้น |
-| 2026-11-02 | หนึ่ง Workspace มีหลาย Store และแต่ละ Store มีหลาย Branch | ยืนยันแล้ว |
-| 2026-11-02 | VAT configurable ต่อ Store และรองรับ Inclusive/Exclusive | ยืนยันแล้ว |
-| 2026-11-02 | รองรับ Manual Payments และ Payment Gateway | ยืนยันแล้ว |
-| 2026-11-02 | Online Ordering ใน Phase 5 (Future Phase) | ลูกค้าสั่งซื้อแบบ Guest ได้; เก็บข้อมูลผู้ซื้อ/ผู้รับและที่อยู่เท่าที่จำเป็น; เชื่อม Order กับ Customer โดยไม่บังคับสมัครบัญชี |
-| 2026-11-02 | Automatic Payment Verification สำหรับ Online Order | ยืนยันผลผ่าน Gateway Webhook ที่ตรวจลายเซ็น/แหล่งที่มา, ตรวจ Order reference/ยอดเงิน/สกุลเงิน, Idempotency และ Audit Trail; ห้ามถือว่า Redirect กลับหน้าเว็บคือหลักฐานว่าจ่ายสำเร็จ |
-| 2026-11-02 | Forgot Password / Password Reset | เพิ่มใน Auth Foundation: ขอรีเซ็ตผ่านอีเมลโดยไม่เปิดเผยว่าบัญชีมีอยู่หรือไม่, Token แบบสุ่มเก็บเป็น Hash ใช้ครั้งเดียวและหมดอายุ, Rate Limit, Audit และนโยบายจัดการ Session หลังเปลี่ยนรหัสผ่าน |
-| 2026-11-02 | Google Sign-In | เพิ่มเป็นงาน Auth Foundation ถัดไป: ใช้ OAuth 2.0 / OpenID Connect, ตรวจ ID Token ฝั่ง Server, เชื่อมบัญชีด้วย Google subject, ป้องกันการยึดบัญชีจาก email ซ้ำ, ตรวจ Workspace Membership/RBAC และบันทึก Audit |
-| 2026-11-02 | Catalog กลางระดับ Workspace; แต่ละ Store เลือกสินค้าเปิดขายและตั้งราคาแยกกัน | ยืนยันแล้ว: Store หน้าร้านเน้นของชำทั่วไป และ Store ออนไลน์เน้นอุปกรณ์ IoT |
-| 2026-11-02 | Category เป็นระดับ Store และ StoreProductCategory เชื่อมสินค้าเข้าหมวดของ Store เดียวกัน | ยืนยันแล้ว; ใช้ composite constraints ป้องกัน cross-store assignment |
-| 2026-11-02 | SKU unique ทั้ง Workspace ไม่อนุญาต SKU ซ้ำข้าม Store | ยืนยันแล้ว; enforce ใน Tenant DB และ normalize SKU ก่อนตรวจซ้ำ |
-| 2026-11-02 | Store เลือกเปิดขาย Variant เป็นรายตัวผ่าน StoreProductVariant | ยืนยันแล้ว |
-| 2026-11-02 | Product/Variant name และ description ใช้ Catalog กลางร่วมกันทุก Store ไม่มี Store override | ยืนยันแล้ว |
-| 2026-11-02 | PR/PO/Invoice และระบบบัญชีเป็น Optional Modules เปิด/ปิดแยกกันได้ต่อ Workspace และวางแผนพัฒนาภายหลัง | ยืนยันแนวทาง; ไม่เป็น Dependency ของ Commerce Core/MVP |
-| 2026-11-02 | สร้าง Default Branch `สำนักงานใหญ่` และ Default Warehouse `คลังหลัก` อัตโนมัติเมื่อสร้าง Store | ยืนยันแล้ว; Store มี Default Branch หนึ่งแห่ง และแต่ละ Branch มี Default Warehouse หนึ่งแห่ง |
-| 2026-11-02 | Opening Stock และ Direct Receiving เป็นวิธีรับสต๊อกเข้า Commerce Core ระยะแรก | ยืนยันแล้ว; ไม่บังคับ Supplier/PO, ทั้งคู่สร้าง Stock Ledger และคำนวณ Moving Weighted Average; Opening Stock Post ได้หนึ่ง Session ต่อ Warehouse |
-| 2026-11-02 | Quantity รองรับจำนวนเต็มและทศนิยมทุกหน่วย สูงสุด 3 ตำแหน่ง | ยืนยันแล้ว; ใช้ PostgreSQL NUMERIC(20,3)/Prisma Decimal, API ใช้ decimal string และปฏิเสธค่าที่เกิน 3 ตำแหน่ง |
-| 2026-11-02 | Custom UOM, Unit Conversion และราคาขายหลายหน่วย | ยืนยันแล้ว; UOM ระดับ Workspace, Variant กำหนดหน่วยฐาน/หน่วยขายและ conversion factor, Stock Ledger เก็บหน่วยฐาน, ProductPrice แยกตามหน่วยขาย |
-| 2026-11-02 | Partial Payment/Deposit | ยืนยันรองรับตั้งแต่ MVP; Order มีหลาย Payment/หลายวิธี, Deposit เป็น Payment ที่ระบุ isDeposit, paidTotal/balanceDue/paymentStatus แยกจาก Order status |
-| 2026-11-02 | Tax Rounding | ยืนยัน Document Level + HALF_UP; คำนวณแยก Tax Category/Rate, ปัดภาษีระดับเอกสารตาม currency minor unit (THB 2 ตำแหน่ง) และเก็บ Tax Snapshot |
-| 2026-11-02 | Partial Return | ยืนยัน Return/ReturnItem แยกจำนวนรับคืนและจำนวน restock; คืนเงินจากราคา/ส่วนลด/ภาษี Snapshot เดิม; รองรับขาย 1 ลัง 12 ขวด คืน 2 ขวด เหลือ net sold 10 ขวด |
-| 2026-11-02 | Return Cost Policy (proposed default) | สินค้า SELLABLE รับกลับด้วยต้นทุน unit_cost_snapshot จาก OrderItem เดิมและคำนวณ WAC ใหม่; DAMAGED/UNSELLABLE ไม่เพิ่ม on_hand และบันทึก disposition/write-off |
+| เป้าหมาย | ขายหน้าร้าน | ขายผ่านเว็บไซต์ |
+| ผู้ใช้หลัก | Owner, Admin, Manager, Cashier, Inventory Staff | Owner, Admin, Manager, Catalog Staff, Order Staff |
+| ประสบการณ์หลัก | ค้นหาสินค้า สแกน Barcode ตะกร้า Checkout | Storefront, Product Detail, Cart, Checkout |
+| Catalog | Catalog สำหรับ POS Workspace | Catalog สำหรับ Online Workspace |
+| ราคา | ราคาหน้าร้าน/สาขา | ราคาออนไลน์/โปรโมชั่นออนไลน์ |
+| Stock | คลังและสาขาหน้าร้าน | Stock สำหรับ Online Fulfillment |
+| Payment | เงินสด, QR, บัตร และ Tender หน้าร้าน | Payment Gateway และ Webhook |
+| Order | POS Sale และ Receipt | Online Order และ Order Tracking |
+| Fulfillment | รับสินค้าหน้าร้าน/จัดการงานขาย | Picking, Packing, Shipping |
+| Hardware | Barcode Scanner, Receipt Printer, Cash Drawer | Web Browser และระบบขนส่ง/ชำระเงิน |
+| รายงาน | ยอดขายรายกะ เงินสด สต๊อก และกำไร | ยอดขายออนไลน์ Conversion Payment และ Shipping |
 
+### 1.3 Non-goals ในรุ่นแรก
 
-### เอกสารออกแบบ
-- [Commerce Domain ERD — Design Review v8](docs/architecture/commerce-erd.md)
-- [Commerce API Contracts — Draft v7](docs/api/commerce-api-contracts.md)
-
-### ประเด็นที่ยังต้องทบทวนก่อน Migration
-
-- StoreType จะเป็นเพียงค่าเริ่มต้น UX หรือบังคับข้อจำกัดช่องทาง POS/Online (ข้อเสนอปัจจุบัน: เป็นค่าเริ่มต้น UX)
-- รายละเอียด Tax Category/Rate และเอกสารภาษีไทยต้องตรวจสอบกับผู้เชี่ยวชาญก่อนใช้งานจริง; วิธีปัดภาษีถูกกำหนดแล้วเป็น Document Level + HALF_UP
-- Default Return Cost Policy ที่เสนอใน ERD/API: สินค้า SELLABLE รับกลับด้วยต้นทุนเดิมจาก OrderItem unit_cost_snapshot; DAMAGED/UNSELLABLE ไม่เพิ่ม on_hand และบันทึก disposition/write-off — ต้องทบทวนร่วมกับฝ่ายบัญชีก่อนเปิดใช้งานจริง
-- Tax Category/Rate เป็น configurable ตาม effective date; ต้องตรวจสอบ mapping และเอกสารภาษีไทยกับผู้เชี่ยวชาญก่อน production; วิธีปัดถูกยืนยันแล้วเป็น Document Level + HALF_UP
-
-
-การอัปเดตสถานะโครงการ 2026-11-02 (ตรวจจาก Repository และ Control/Tenant DB ล่าสุด)
-
-### สถานะจริง ณ วันนี้
-
-- **Foundation / Auth / Workspace:** มี Control DB, Auth, Workspace Membership/RBAC, Workspace Provisioning, Tenant DB Registry, Platform Admin endpoints/UI และ Tenant API (`GET /api/tenant/:workspaceId/settings`) อยู่ในโค้ดแล้ว; ทดสอบ HTTP Authentication, tenant isolation และ Workspace status gate ผ่าน
-- **Workspace A/B:** A = `workspace-a-local`, DB `syncup_ws_2a4577ace43c`; B = `workspace-b-local`, DB `syncup_ws_e4199e58d35b`. ทั้งสอง Workspace มี Owner คนละบัญชี และถูกเปลี่ยนสถานะเป็น `SUSPENDED` แล้ว; ตรวจยืนยันว่า Tenant DB ทั้งสองยังคงอยู่ ไม่ได้ลบหรือแก้ข้อมูลภายใน. User Session ยังคงเป็นระดับ User; การระงับสิทธิ์ทำผ่าน Workspace status gate
-- **Tenant DB:** ทั้ง A/B มีเพียง `tenant_settings`, `audit_events`, `tenant_migrations`; schema version เป็น `20261031000100_tenant_baseline`. ยังไม่มี Commerce/Product/Inventory/Media tables. Tenant baseline เดิมตรงกับ migration ที่ตรวจแล้ว
-- **Commerce Data Model:** มี Tenant Prisma Schema และเอกสาร ERD/API Contract/Approved Decisions/Review/Final Plan แล้ว; การออกแบบ Composite Constraints, Default Branch/Warehouse, Price History, Stock Ledger/Reservation, WAC, Bulk Image Upload และ Provisioning ผ่านการทบทวนเชิงออกแบบตามบันทึกการตัดสินใจ
-- **Media:** เพิ่ม `MediaAssetDerivative` และชนิด ORIGINAL/MAIN/THUMBNAIL ใน Prisma Schema แล้ว; Prisma validate ผ่านตามการตรวจล่าสุด. เป็น schema/design change ใน Repository เท่านั้น ยังไม่มี migration หรือ DB deployment
-- **Migration:** มี Tenant initial Commerce migration specification และ SQL candidates (Prisma diff + custom constraints) แต่ยังไม่ reconcile เป็น incremental migration candidate ที่ผ่านการตรวจครบ และยังไม่มี Migration Sign-off. ห้าม generate/apply migration หรือ generate Prisma Client จนกว่าจะผ่าน Sign-off
-- **Tests / Runtime:** ยังไม่มีหลักฐานว่า Commerce API, CSV Import, Bulk Image Upload, Store/Branch/Warehouse provisioning หรือ Stock/Price services ใช้งานจริงครบ; Docker Engine/DB tooling มีข้อจำกัดจากการตรวจครั้งก่อน จึงยังไม่ถือว่า Commerce runtime ผ่าน acceptance
-- **POS Workspace:** สร้าง `pos-local` แล้ว โดย Owner A (`owner-a@syncup.local`) เป็น Owner; Workspace ACTIVE และใช้ Tenant DB ที่ Provisioning ตั้งชื่ออัตโนมัติ. Workspace A/B ถูก Suspend และเก็บ Tenant DB เดิมไว้
-
-### งานที่กำลังทำ / ลำดับถัดไป
-
-1. [x] เลือก Owner สำหรับ Workspace POS: Owner A (`owner-a@syncup.local`) ยืนยันแล้วเมื่อ 2026-11-03
-2. [x] สร้าง POS Workspace `pos-local` ด้วย Owner A; Provisioning และ Tenant DB Registry เชื่อมต่อฐานข้อมูลแยกด้วย Runtime Role ได้
-3. [x] ทดสอบ Tenant API ผ่าน HTTP จริง: unauthenticated=401, Owner A อ่าน Workspace A=200, cross-tenant=403, Owner B อ่าน Workspace B=200, suspended Workspace=403; ทดสอบ service-level status gate ผ่าน
-4. [x] Suspend Workspace A/B โดยเก็บ Tenant DB เดิมไว้; ตรวจสอบสถานะ `SUSPENDED` และ database existence สำเร็จ
-5. [~] ทำ Migration SQL Reconciliation: สร้าง Prisma clean-install DDL candidate และ custom constraints candidate; จัดการ TIMESTAMPTZ และเพิ่ม canonical normalized-key constraints แล้ว แต่ยังต้องปิด effective-date overlap, branch/warehouse lifecycle, inventory/posting invariants และทำ incremental upgrade candidate
-6. [ ] ทดสอบ incremental migration candidate บน disposable PostgreSQL ที่มี baseline เดียวกัน; ตรวจ preflight/postflight และ rollback/recovery plan
-7. [ ] ขอ Migration Sign-off แยกต่างหากก่อนสร้างหรือ apply migration จริง
-8. [ ] หลัง Sign-off จึงค่อย deploy Tenant Commerce schema และเริ่ม implement/test Business APIs ตาม Phase
-
-### ความคืบหน้าการดำเนินการ 2026-11-03 — Tenant API และ Suspend
-
-- Tenant API ผ่าน HTTP test: unauthenticated 401, own workspace 200, cross-tenant 403, suspended workspace 403; service-level suspension test ผ่าน
-- Workspace A/B ถูก Suspend จริง; ตรวจยืนยันทั้งสองสถานะเป็น SUSPENDED และ Tenant DB เดิมยังคงอยู่
-- POS Workspace `pos-local` ยังคง ACTIVE
-
-### ความคืบหน้าการดำเนินการ 2026-11-03 — Migration Reconciliation
-
-- `prisma validate --schema prisma/tenant/schema.prisma` ผ่านด้วย Prisma CLI 6.16.2 (ใช้ placeholder TENANT_DATABASE_URL สำหรับ validation เท่านั้น)
-- สร้าง `docs/architecture/tenant-commerce-clean-install.candidate.sql` จาก `prisma migrate diff --from-empty`; เป็น Prisma DDL candidate เท่านั้น ไม่ใช่ migration ที่ deploy ได้ และไม่รวม baseline 3 ตาราง
-- สร้าง `docs/architecture/tenant-commerce-custom-constraints.candidate.sql` เป็นข้อเสนอ partial unique indexes และ CHECK constraints; ยังไม่ได้ทดสอบกับ PostgreSQL และห้าม apply
-- สร้าง `docs/architecture/tenant-commerce-migration-reconciliation.md` สรุป input, scope gap, clean-install vs incremental strategy และ verification gate
-- แก้ Tenant Prisma DateTime ทุกฟิลด์เป็น native `@db.Timestamptz(3)` ตาม ERD แล้ว; `prisma validate` ผ่านและ regenerate clean-install candidate เรียบร้อย
-- พบ gap อื่น: default Branch/Warehouse uniqueness, minimum Warehouse per Branch, normalized keys, effective-date overlap, inventory arithmetic checks และ Order/Payment/Return เป็น ERD scope ที่ยังไม่อยู่ใน Tenant Prisma schema
-- เพิ่ม `Store.normalizedSlug` แบบ unique และเปลี่ยน uniqueness ของ Store slug จาก raw slug เป็น normalized slug; เพิ่ม CHECK candidate บังคับ normalized Store slug, Category slug, SKU, Barcode และ UOM code ให้เท่ากับ `lower(btrim(raw_value))`
-- Regenerate clean-install candidate จาก schema ล่าสุด; `prisma validate` ผ่านด้วย Prisma CLI 6.16.2
-- Normalization ยังต้องใช้ shared canonicalization function ใน API/CSV/Image Import และทดสอบทุก write path; ProductPrice/TaxRate exclusion candidate เพิ่มแล้วแต่ต้องทดสอบ btree_gist; TaxProfile selection และ branch/warehouse lifecycle ยังเปิดอยู่
-- ยังไม่มี incremental-upgrade SQL ที่ผ่าน reconciliation; baseline SQL เป็น standalone file ไม่ใช่ Prisma migration history ที่ใช้เป็น authoritative `--from-migrations` source ได้โดยตรง
-- ไม่มีการ Generate Prisma Client, Apply Migration หรือเชื่อมต่อ/แก้ไข Tenant DB จริงในขั้นตอนนี้
-
-### ความคืบหน้าการดำเนินการก่อนหน้า 2026-11-03
-
-- ยืนยัน Owner A (`owner-a@syncup.local`) เป็น Owner ของ POS; บัญชี ACTIVE และไม่ใช่ Platform Admin
-- ตรวจ Control DB แบบอ่านอย่างเดียว: Workspace A/B ยัง ACTIVE, Owner A/B ถูกต้อง, มี Active Session อย่างละ 1; ยังไม่พบ `pos-local`
-- ตรวจ Tenant DB A/B แบบ read-only: ยังคงผูกกับ DB เดิม `syncup_ws_2a4577ace43c` และ `syncup_ws_e4199e58d35b`; มีเฉพาะ Baseline 3 ตารางและ Migration `20261031000100_tenant_baseline`
-- เพิ่ม Workspace ACTIVE guard ใน `WorkspacesService.membershipFor()` เพื่อปฏิเสธการจัดการสมาชิก/บทบาทเมื่อ Workspace ไม่ ACTIVE; `npm run build --prefix apps/api` ผ่าน
-- **ยังไม่ได้สร้าง POS Workspace, ยังไม่ได้ Suspend A/B, ไม่มีการเปลี่ยน Tenant DB/ข้อมูล และไม่มีการ apply migration**
-- ประเด็นต้องแก้ก่อน Suspend: metadata username ของ Tenant DB A/B เป็น `syncup_provisioner` แต่ `WorkspaceDatabaseRegistry` ตรวจรูปแบบ `syncup_rt_<12 hex>`; ต้องตรวจและ reconcile provisioning identity/credential mapping ก่อนยืนยันเส้นทางใช้งานจริง
-- ตรวจเพิ่มแบบ read-only: Tenant DB ทั้งสองมี owner เป็น `syncup_provisioner`, มี Baseline 3 ตาราง และไม่มี Runtime Role `syncup_rt_<12 hex>`; Control DB มี `secretCipher` ว่างทั้งคู่. `WORKSPACE_DATABASE_ADMIN_URL` เชื่อมต่อได้ แต่ PostgreSQL role `syncup_provisioner` ไม่มี `CREATEROLE`; การ Provision A จึงหยุดที่ `CREATE ROLE` ก่อนสร้าง/แก้ Runtime Credential. คืนสถานะ A เป็น `ACTIVE` หลัง Provisioning error (เดิม ACTIVE); B ไม่ได้เริ่ม Provisioning.
-- ปรับ `WorkspaceProvisioningService` ไม่ให้เปลี่ยน Workspace ที่เดิม ACTIVE เป็น FAILED เมื่อ Provisioning ล้มเหลว; จะตั้ง FAILED เฉพาะ Workspace ที่เริ่มจาก PROVISIONING. `npm run build` ต้องตรวจซ้ำหลังการแก้ไขนี้.
-- **ยังไม่มีการสร้าง Runtime Role, ไม่มีการเขียน Credential ใหม่, ไม่มีการเปลี่ยนสิทธิ์ DB, ไม่มี POS Workspace และไม่มีการ Suspend A/B.** ต้องกำหนด Admin DB credential ที่มี `CREATEROLE` (แยกจาก Runtime Role) ก่อนทำ Credential Reconciliation ต่อ
-- ตรวจเพิ่มรอบ 2026-11-03: `WORKSPACE_DATABASE_RUNTIME_URL` เชื่อมต่อได้ในฐานะ `syncup_runtime` แต่ไม่มี `CREATEROLE`/`CREATEDB`; ไม่มี Admin credential อื่นใน Environment ที่ตรวจพบ. จึงยังไม่มีบัญชีที่ได้รับสิทธิ์พอสร้าง Runtime Roles. ห้ามยกระดับ `syncup_provisioner` หรือ `syncup_runtime` เองจากแอป.
-- ตรวจ Status Gate: `RbacService.hasPermission()` และ `WorkspaceDatabaseRegistry.forMembership()` กรองเฉพาะ Workspace `ACTIVE`; `WorkspacesService.membershipFor()` ก็ปฏิเสธ Workspace ที่ไม่ ACTIVE. อย่างไรก็ตาม ยังไม่มีการเรียก `WorkspaceDatabaseRegistry.forMembership()` จาก Tenant route/service ใน `apps/api/src` ณ ตอนตรวจ จึงต้องผูก Registry เข้ากับ Tenant request path ก่อนถือว่า Tenant API enforcement ครบ. ไม่เพิกถอน User Session แบบ global เมื่อ Suspend เพราะ Session เป็นระดับ User ไม่ใช่ Workspace; การเข้าถึง Workspace ต้องถูกปฏิเสธจาก Membership/Status gate.
-- ตรวจยืนยันหลังการทดลอง: A/B ยังคง `ACTIVE`, `secretCipher` ยังว่าง, POS `pos-local` ยังไม่มี; ไม่มี Runtime Role ถูกสร้างและไม่มี DB permission/tenant data เปลี่ยนแปลง. `npm run build` และ `git diff --check` ผ่าน
-
-> หมายเหตุสถานะ: เครื่องหมาย [x] ใน Roadmap หมายถึงข้อกำหนด/การตัดสินใจหรือเอกสารออกแบบเสร็จตามข้อความของรายการนั้น ไม่ได้ยืนยันว่า Feature ถูก implement หรือ deploy แล้ว เว้นแต่ระบุชัดเจนว่าเป็นงานโค้ดและมีผลทดสอบรองรับ
-
-
+- ไม่มี Shared Catalog หรือ Shared Inventory ระหว่าง POS กับ Online
+- ไม่มี Order Inbox กลางที่รวมสองระบบ
+- ไม่มีการ Sync ราคา สต๊อก ลูกค้า หรือคำสั่งซื้อโดยอัตโนมัติ
+- ไม่มี Marketplace Connector เป็นค่าเริ่มต้น
+- ไม่มีการย้าย POS Workspace ให้กลายเป็น Online Workspace
+- ไม่มี Offline POS แบบเต็มรูปแบบใน MVP
+- ไม่มี Accounting/General Ledger เต็มรูปแบบใน MVP
 
 ---
 
-## ความคืบหน้าการดำเนินการ 2026-11-04 — Commerce Lifecycle, Runtime Security และ Migration Verification
+## 2. หลักการออกแบบ Workspace — ข้อกำหนดที่ห้ามละเมิด
 
- Repository และผลทดสอบบน Disposable PostgreSQL เท่านั้น ไม่ได้หมายความว่ามีการ Deploy Commerce Migration หรือแก้ไขฐานข้อมูล Tenant จริง
+### 2.1 Workspace คือ Business Boundary
 
-### Store / Branch / Warehouse Lifecycle
+POS และ Online ต้องเป็นคนละ Workspace Record, คนละ Workspace ID และคนละ Tenant Database
 
-- [x] เพิ่ม shared canonicalization utility ที่ `apps/api/src/shared/canonicalization.ts`; กำหนดกติกา normalize Store/Category slug, SKU, Barcode, UOM และ Branch/Warehouse code ให้ใช้ร่วมกัน
-- [x] เพิ่ม Store creation แบบ Transactional พร้อม Default Branch และ Default Warehouse
-- [x] เพิ่มการสร้าง Branch พร้อม Default Warehouse และการสร้าง Warehouse ภายใต้ Branch
-- [x] เพิ่มการกำหนด Default Branch/Default Warehouse โดย Lock parent row, ทำใน Transaction และบันทึก AuditLog
-- [x] เพิ่ม Archive Warehouse: ป้องกันการ Archive คลังที่ยังเป็นคลัง Active สุดท้าย และเลือก Default Warehouse ทดแทน
-- [x] เพิ่ม Archive Branch: ป้องกันการ Archive สาขา Active สุดท้าย, ตรวจ Stock Balance ที่ on_hand/reserved ไม่เป็นศูนย์, Archive Warehouses ลูกและ Branch แบบ Transactional พร้อมเลือก Default Branch ทดแทน
-- [x] เพิ่ม Permission `commerce.store.manage` ใน WorkspacesService และ Control DB migration `202611030001_commerce_store_manage`
-- [x] เพิ่ม Tenant API routes สำหรับ Store/Branch/Warehouse create, set-default และ archive ตาม Service ที่ implement
-- [x] เพิ่ม `apps/api/scripts/verify-tenant-lifecycle-http.cjs` และ `test:tenant-lifecycle-http`; ทดสอบ HTTP routing ของครบทั้ง 7 mutation endpoints ด้วย production AuthGuard/RbacGuard, anonymous/cross-workspace/missing-permission denial, status contracts และ domain error mapping — PASS (ใช้ mocked service providers; ไม่ใช่การทดสอบกับ Tenant DB จริง)
-- [x] เพิ่ม `verify-tenant-lifecycle-service.cjs` และ `test:tenant-lifecycle-service`; ทดสอบบน Disposable PostgreSQL จริง: create Store/Branch/Warehouse, audit persistence, concurrent default switching, archive/default replacement, last-active guards และ transaction rollback — PASS
-- [x] Raw SQL lifecycle inserts ระบุ UUID ด้วย `gen_random_uuid()` สำหรับ Store/Branch/Warehouse/AuditLog เนื่องจาก Prisma `uuid()` เป็น client-side default
-- [x] เพิ่ม service/database test ยืนยันว่า `stock_balances.reserved > 0` ป้องกันการ Archive Branch — PASS บน Disposable PostgreSQL
-- [ ] ยังต้องทดสอบ Stock Reservation lifecycle/concurrency โดยตรงเมื่อ Reservation API ถูก implement
-- [ ] ทบทวนการ guard Stock Reservation ให้สอดคล้องกับ reserved balance ก่อนเปิดใช้งานจริง
+- POS Workspace หนึ่งชุดมีข้อมูลและการตั้งค่าของ POS เอง
+- Online Workspace หนึ่งชุดมีข้อมูลและการตั้งค่าของ Online เอง
+- Workspace แต่ละประเภทมี Module Profile, Navigation, Permission Profile และ Provisioning Template ของตนเอง
+- ผู้ใช้คนเดียวเป็นสมาชิกของทั้งสอง Workspace ได้ แต่ Membership และ Role แยกจากกัน
+- การลบ/ระงับ/เปลี่ยนสมาชิกใน Workspace หนึ่งไม่มีผลต่อ Membership ของอีก Workspace
+- ห้ามใช้ Store ID, Product ID, User ID หรือ URL เป็นหลักฐานอนุญาตให้ข้าม Workspace
 
-### Tenant Migration Verification
+### 2.2 ข้อมูลที่ต้องแยก 100%
 
-- [x] เพิ่ม Disposable Tenant migration harness: `apps/api/scripts/verify-tenant-migrations.cjs` และคำสั่ง `test:tenant-migrations`
-- [x] ทดสอบ Clean install และ Incremental upgrade บน Disposable PostgreSQL: Lifecycle constraints, atomic default replacement, baseline ledger retention, migration ledger และ duplicate-application guard — PASS
-- [x] เพิ่ม Control DB backup/restore rehearsal: `apps/api/scripts/verify-control-migration-backup-restore.cjs`; ทดสอบ Migration idempotency, permission scope และ Restore Tenant schema/Commerce ledger/sentinel data ไปยัง isolated database — PASS
-- [x] เพิ่ม Runtime grants verification: `apps/api/scripts/verify-runtime-grants.cjs`; ยืนยัน Runtime Role ไม่มี DDL/role-creation privilege, เขียน Migration Ledger ไม่ได้, อ่าน Ledger ได้ และได้รับ default grants สำหรับ future tables/sequences — PASS
-- [x] เพิ่ม Provisioning role isolation verification: `apps/api/scripts/verify-provisioning-role-isolation.cjs`; ยืนยัน membership เดิมถูกถอน, Runtime Role เป็น NOINHERIT และไม่มี memberships, PUBLIC table grants ถูกถอน, encrypted credential persistence และ runtime health check — PASS
-- [x] เพิ่ม PostgreSQL privilege audit utility: `apps/api/scripts/postgres-privilege-audit.cjs` พร้อม Disposable integration test `verify-postgres-privilege-audit.cjs`
-- [x] Privilege audit test — PASS: ทำงานใน READ ONLY transaction, inventory database/schema/relation/function/default ACLs, ตรวจพบ Runtime Role membership และ PUBLIC grants, รายงาน ownership และ PostgreSQL version
-- [x] ตรวจ cleanup หลัง Privilege audit test: Disposable databases=0 และ roles=0
-- [x] API build, `npm run typecheck`, `npm run test:canonicalization`, `npm run test:tenant-lifecycle-http`, `npm run test:tenant-lifecycle-service`, `npm run test:tenant-migrations`, `npm run test:runtime-grants`, `npm run test:provisioning-role-isolation`, `npm run test:postgres-privilege-audit`, `npm run test:control-backup-restore` และ `git diff --check` — PASS เมื่อ 2026-11-04; ESLint ยังรันไม่ได้เพราะไม่มี executable `eslint` และ `pnpm` ไม่ได้ติดตั้งใน environment
-- [x] `npm run test:postgres-privilege-audit` — PASS ผ่าน Local Admin URL ที่จำกัด localhost เท่านั้น
-- [x] ทำ Read-only privilege audit กับ Tenant DB ของ Workspace `pos-local` เมื่อ 2026-11-04; พบ policy deviations 3 รายการ: Runtime Role `INHERIT=true`, `PUBLIC` มี schema `USAGE`, และ Runtime Role มี INSERT/UPDATE/DELETE บน `tenant_migrations` ทั้งที่ควรเป็น SELECT-only; รายละเอียดใน `docs/architecture/pos-local-tenant-privilege-audit-2026-11-04.md` (remediation และ Read-only post-audit PASS เมื่อ 2026-11-04; ดู execution record ด้านล่าง)
-- [ ] ยังไม่มีการ Apply Commerce Migration หรือ Generate Tenant Prisma Client; ผลทดสอบทั้งหมดข้างต้นใช้ Disposable resources ที่สร้างและลบโดย test harness เท่านั้น
+ข้อมูลต่อไปนี้เป็นข้อมูลภายใน Workspace เท่านั้น:
 
-### Runtime Security / Migration Runner
+- Store, Branch, Warehouse, Register และ Shift
+- Product, Variant, SKU, Barcode, UOM, Category และ Product Image
+- Price List, Promotion, Discount และ Tax Configuration
+- Stock Balance, Stock Movement, Reservation, Cost และ Valuation
+- Customer, Address, Cart และ Customer Session
+- Order, Order Item, Payment, Refund, Return และ Receipt
+- Shipment, Fulfillment, Tracking และ Delivery Configuration
+- Business Audit Log, Import Batch, Idempotency Key และ Document Sequence
+- Workspace Settings, Business Files และ Media Metadata
 
-- [x] Harden TenantMigrationRunner: ถอน PUBLIC database/schema/table/sequence/function privileges และ PUBLIC default privileges
-- [x] Runtime Role ได้เฉพาะ schema USAGE, table DML, sequence USAGE/SELECT และ default grants สำหรับ objects ใหม่; `tenant_migrations` เป็น SELECT-only
-- [x] Provisioning ถอน inherited role memberships ก่อน Activate Runtime Role และกำหนด NOINHERIT
-- [x] Health check ตรวจ database connection, current_user ให้ตรงกับ runtime URL username และการมีอยู่ของ `tenant_settings`
-- [x] ตรวจสอบ Privilege Audit กับ Workspace Tenant `pos-local` จริงแล้ว; พบ 3 policy deviations ตามรายงาน. ผู้ใช้อนุมัติ remediation แล้ว และดำเนินการผ่าน PostgreSQL provisioner session แบบมี precondition/transaction guard เมื่อ 2026-11-04; Read-only post-audit และ Runtime Role smoke test PASS แล้ว
+ไม่มี Foreign Key ข้าม Tenant Database และไม่มี Query ที่อ่านตารางธุรกิจจาก Workspace อื่นโดยตรง
 
-### ลำดับงานถัดไป
+### 2.3 สิ่งที่ใช้ร่วมกันได้
 
-1. [x] ได้รับการยืนยันและทำ Read-only Privilege Audit กับ `pos-local` แล้ว; ไม่พบการเปลี่ยนแปลงฐานข้อมูล
-2. [x] จัดทำผล Audit และระบุ remediation 3 รายการใน `docs/architecture/pos-local-tenant-privilege-audit-2026-11-04.md`; **แก้ไขแล้วและตรวจ Read-only ซ้ำ PASS เมื่อ 2026-11-04**
-3. [x] ได้รับอนุมัติและดำเนินการ remediation 3 รายการกับ `pos-local` ผ่าน PostgreSQL provisioner session แบบมี guard เมื่อ 2026-11-04; Read-only Audit และ Runtime Role smoke test หลังแก้ไข PASS
-4. [x] เพิ่ม HTTP lifecycle route/guard integration harness; PASS โดยใช้ mocked services
-5. [x] เพิ่ม service/database integration test บน Disposable PostgreSQL สำหรับ lifecycle, audit, rollback, concurrency และ default replacement — PASS
-6. [x] ยืนยัน Branch archive guard ปฏิเสธ Warehouse ที่มี reserved stock — PASS; Reservation lifecycle/concurrency ผ่าน Service จริงบน Disposable PostgreSQL แล้ว
-7. ทบทวน Migration Reconciliation และ Migration Sign-off ให้ครบก่อน Generate Prisma Client หรือ Apply Migration จริง
-8. หลัง Sign-off จึงเริ่ม Tenant Commerce deployment และทดสอบ Business APIs ตาม Phase
+ใช้ร่วมกันได้เฉพาะ Platform Capability และ Software Components ที่ไม่ทำให้ Business Data ปะปนกัน:
 
-> หมายเหตุ: [x] หมายถึงมี implementation หรือผลทดสอบตามที่ระบุ; Disposable test PASS ไม่ใช่หลักฐานว่า Workspace Tenant จริงผ่านการตรวจหรือว่า Migration ถูก Deploy แล้ว
+- User Identity, Authentication และ Session
+- Workspace Registry และ Membership
+- Workspace Provisioning Orchestrator
+- Module Catalog และ Module Package Registry
+- Shared UI Components, Types, Validation และ API Contracts
+- Common Libraries เช่น Money, Decimal, Date/Time และ Address primitives
+- Deployment Pipeline, Monitoring และ Logging Infrastructure
 
+การใช้ Shared Code ไม่ได้หมายถึงการใช้ Shared Business Database
 
-## Stock Reservation / Inventory Service MVP and Disposable-DB Integration (2026-11-04)
+### 2.4 Cross-Workspace Access
 
-- [x] Added `StockInventoryModule`, `StockInventoryService` and `StockInventoryController` with Membership-scoped Tenant DB resolution through `WorkspaceDatabaseRegistry`.
-- [x] Added authenticated API routes for reserve/release/consume/expiry, receiving, direct issue, reversal and balance read; all routes require `commerce.inventory.manage`.
-- [x] Added control-plane permission seed migration `202611040001_commerce_inventory_manage` and included the permission in new Workspace default admin roles. The migration file is prepared only; it has NOT been applied.
-- [x] Reservation lifecycle uses row locks and idempotent replay; expired ACTIVE reservations are released using database time and bounded `SKIP LOCKED` batches.
-- [x] Reservation and Release do not create physical `StockMovement` rows; removed reservation-only values from `StockMovementType` and `StockReferenceType` Prisma enums and aligned the clean-install / upgrade SQL candidates.
-- [x] Receiving, issue, consume and reversal update StockBalance, InventoryCost and physical StockMovement in one transaction. WAC uses PostgreSQL NUMERIC, 3-decimal quantities, 6-decimal cost/value, HALF_UP, zero-stock reset and reconciliation guard.
-- [x] Reversal is the exact opposite of the original movement, records `reversal_of_id`, requires a reason and is idempotent / limited to one reversal per original.
-- [x] Six service transaction scenarios now call the production `StockInventoryService`; the seventh database CHECK-constraint scenario is verified directly, and the HTTP smoke test calls the real controller and production AuthGuard/RbacGuard against the same Disposable PostgreSQL DB.
-- [x] Additional Disposable DB tests cover reservation expiry, receipt WAC, receipt/reversal idempotency, cost reconciliation and HTTP authorization/routing.
-- [x] `npm run test:stock-reservation-concurrency` passes; cleanup verified with zero `syncup_stock_concurrency_*` databases and zero remaining sessions.
-- [ ] Full Opening Stock/Draft Direct Receiving, multi-line receiving, Supplier/PO validation, Return, Transfer, CSV Adjustment, audit UI and background expiry scheduling remain outside this MVP and require separate implementation/tests.
-- Migration Sign-off and deployment to any real Tenant remain on hold. No Tenant database or control-plane migration was changed by this work.
+ค่าเริ่มต้นคือ **DENY ALL**
 
-## Continuation update — 2026-11-04
-
-- Fixed the Inventory `consume()` expiry guard: the locked reservation read now calculates `is_expired` using PostgreSQL `clock_timestamp()` before any balance/cost mutation. An expired ACTIVE reservation is released and cannot create a SALE movement.
-- Consumption now preserves the reservation's `reference_type` and `reference_id` on its physical SALE movement (falling back to the reservation id when no source reference id was supplied).
-- Extended the Disposable PostgreSQL inventory harness with a regression case proving that consuming an expired reservation releases it, leaves on-hand stock unchanged, and writes no SALE movement. Re-ran it in this continuation session against localhost-only Disposable PostgreSQL; PASS.
-- Re-ran the Store/Branch/Warehouse service integration suite against Disposable PostgreSQL; PASS for create, defaults, concurrency, archive invariants, reserved-stock protection and transaction rollback.
-- Re-ran Tenant clean-install/incremental migration candidate acceptance; PASS. Runtime least-privilege grants, PostgreSQL privilege-audit detection, provisioning role-isolation, and Control DB migration + Tenant backup/restore rehearsal also PASSed on uniquely named Disposable DBs.
-- Re-ran Tenant Lifecycle HTTP integration and canonicalization tests; PASS. API/Web build and typecheck, Control/Tenant Prisma schema validation and `git diff --check` PASS from the preceding checks.
-- Regenerated `tenant-commerce-incremental-upgrade.candidate.sql` from the current clean-install/custom/canonicalization/lifecycle candidates. It remains review-only.
-- Current-session checks: API build/typecheck PASS; Web build/typecheck PASS; both Control and Tenant Prisma schemas validate; canonicalization tests PASS; Tenant Lifecycle HTTP integration harness PASS; `git diff --check` PASS.
-- Remaining tooling limitation: API lint cannot start because ESLint is not installed for that package; Web lint cannot start because the repository has no ESLint 9 flat config.
-- No Prisma Client was generated. No Control DB migration or Tenant SQL was applied. No real Tenant database was modified. Migration Sign-off remains NOT GRANTED.
-
-
-## pos-local privilege remediation — 2026-11-04
-
-- [x] Applied the three previously approved least-privilege corrections to pos-local only: Runtime Role NOINHERIT; revoke PUBLIC schema public USAGE; make tenant_migrations SELECT-only for Runtime Role.
-- [x] Applied inside a single transaction with exact database/role/owner preconditions, a transaction advisory lock and in-transaction postcondition checks.
-- [x] Re-ran the privilege audit in a read-only transaction: zero ERROR findings.
-- [x] Connected using the registered Runtime Role credential and verified read-only access to tenant_migrations and tenant_settings; schema USAGE remains available and migration-ledger writes are not granted.
-- [x] Verified database/table ownership and role memberships remain unchanged.
-- No schema migration, Control DB mutation, application data mutation, Prisma Client generation or deployment was performed. Migration Sign-off remains NOT GRANTED.
-
-
-## Final Preflight — pos-local — 2026-11-04
-
-- [x] Read-only registry/database identity check: `pos-local` ACTIVE; Tenant DB `syncup_ws_c0130bf3c1c0`; Runtime Role `syncup_rt_c0130bf3c1c0`.
-- [x] Read-only PostgreSQL compatibility snapshot: PostgreSQL 18.6, UTF8; exact baseline ledger row retained; no Commerce tables exist. Incremental Upgrade is the correct candidate path.
-- [x] Read-only extension check: `btree_gist` 1.8 is available/trusted but not installed; Provisioner database/schema CREATE capability confirmed. No extension installed.
-- [x] Rechecked Runtime Role NOINHERIT and least-privilege schema/Ledger grants; no lock waits or idle-in-transaction sessions observed.
-- [x] Disposable PostgreSQL 18.6 backup/restore rehearsal PASS; restored schema, Store row, Tenant setting sentinel and Commerce migration ledger verified; disposable databases cleaned up.
-- [x] Disposable Control DB checks PASS for Store and Inventory permission migrations: idempotent and admin-only grants.
-- [x] Actual `pos-local` custom-format backup and isolated Recovery restore completed; see Actual pos-local Backup/Restore Rehearsal below for ID, timestamp, SHA-256 and verification results.
-- [ ] Confirm expected collation/ctype `English_United States.1252`.
-- [ ] Approve maintenance window, application revision/checksum, traffic/write freeze and rollback operator.
-- [ ] Separately authorize/apply Control DB permission migrations only after sign-off; current real Control DB has neither Commerce permission key nor migration history entry.
-- [ ] Obtain explicit Migration Sign-off naming Workspace `pos-local`, Incremental Upgrade candidate `docs/architecture/tenant-commerce-incremental-upgrade.candidate.sql`, version `202611030001_tenant_commerce`, SHA-256 `836f1af276b908813be9089cb3a2813363820b9e00d3a054d7693af62d2473b3`.
-
-Final Preflight disposition: **PARTIAL PASS; Migration Sign-off NOT GRANTED.** No real Tenant/Control migration, extension installation, Prisma Client generation or deployment was performed.
-
-## Actual pos-local Backup/Restore Rehearsal — 2026-11-04
-
-- [x] Backed up actual `pos-local` with PostgreSQL 18.6 custom format and restored the exact archive into isolated Recovery DB `syncup_recovery_pos_local_20261104075738_5bab7de0`.
-- [x] Verified schema, every table's row count/content checksum, migration ledger, database identity/version/locale and Runtime Role isolation.
-- [x] Backup file: `%LOCALAPPDATA%\SyncUp\Backups\pos-local_20261104075738_5bab7de0.dump`; 4,746 bytes; created 2026-11-04 14:57:40.615 +07:00.
-- [x] SHA-256: `e70190385bf33d614892cc37c41349e0f002479a16ba830cc4723aa9c27d21d5`.
-- [ ] Confirm retention/storage policy and collation; define maintenance/deployment/rollback window; separately authorize Control DB permission migrations; obtain explicit named-target Migration Sign-off.
-- Backup and Recovery DB remain local pending explicit cleanup approval; no automatic expiry/off-device copy is configured.
-
-## pos-local Final Sign-off Review — 2026-11-04 (read-only; pending owner confirmations)
-
-- [x] Reviewed the baseline DDL and application references for `tenant_settings` and `audit_events`.
-- `tenant_settings=0` is consistent with the current provisioning/baseline lifecycle: the baseline creates the table but does not seed settings, and the workspace provisioning flow does not insert default rows. The Workspace owner explicitly confirmed that no default settings rows are expected because pos-local has no business data (2026-11-05).
-- `audit_events=0` is consistent with a workspace that has not yet performed operations through the currently identified Stock/Inventory audit writer. The Workspace owner explicitly confirmed that no business activity has occurred that should have produced audit rows (2026-11-05).
-- Do not add placeholder settings or synthetic audit rows merely to make either table non-empty.
-- [x] Workspace owner confirmed both zero-row counts are expected for `pos-local` before first Commerce use (2026-11-05).
-- [x] Workspace owner approved the Backup/Recovery retention policy (2026-11-05): daily backups retained 30 days; weekly backups 12 weeks; monthly backups 12 months; each pre-migration backup retained at least 30 days after successful migration acceptance; rehearsal Recovery DB retained until an encrypted off-host backup and restore are verified, then retained at least 7 additional days before requesting cleanup approval; maintain one encrypted off-host copy; verify SHA-256 on every copy; perform a restore test quarterly.
-- Policy approval is recorded; operational activation is pending an approved off-host destination/credentials, retention-job implementation and verification. No automatic expiry, deletion, off-host transfer, or cleanup was performed. The existing backup and Recovery DB remain retained locally.
-- [x] Approve the proposed Backup/Recovery retention and off-host storage policy (2026-11-05).
-- [ ] Confirm `English_United States.1252` as the intended Tenant collation/ctype.
-- [ ] Define maintenance window, application release revision/checksum, traffic/write freeze, deployment operator and rollback plan.
-- [ ] Separately authorize the two Control DB permission migrations; they remain unapplied to the real Control DB.
-- [ ] Obtain explicit Migration Sign-off naming `pos-local`, candidate `docs/architecture/tenant-commerce-incremental-upgrade.candidate.sql`, version `202611030001_tenant_commerce`, SHA-256 `836f1af276b908813be9089cb3a2813363820b9e00d3a054d7693af62d2473b3`.
-
-Final review disposition: **PARTIAL PASS — Migration Sign-off NOT GRANTED.** This review did not apply Tenant or Control DB migrations, install extensions, generate a Tenant Prisma Client, deploy, modify source Tenant data, or delete the retained backup/Recovery DB.
-
-
-## Synology NAS Backup Destination Configuration — 2026-11-05
-
-- [x] Added a Platform Admin-only API to save the backup destination path outside the database, avoiding a Control DB schema migration.
-- [x] Added a Backup / NAS panel in System Admin; the homepage Backup button keeps the entered path through login and saves it to the API configuration.
-- [x] API validates absolute/UNC paths and checks that its own process can access the directory with write permission.
-- [x] Added Synology DSM/SMB setup notes in `docs/operations/synology-backup-destination.md`.
-- [ ] Verify against the actual DS220+ Shared Folder after its network path and Windows service-account permissions are configured.
-- [ ] Implement actual PostgreSQL backup creation, scheduled retention, encrypted off-host copy and quarterly restore verification.
-- No NAS credentials were requested or stored; no database migration or actual backup was run.
-
-
-## Foundation audit continuation — 2026-11-05
-
-- [x] Completed read-only audit of Auth, Workspace Provisioning, Tenant DB Registry and RBAC; findings and remaining production gaps are recorded in `docs/architecture/foundation-audit-2026-11-05.md`.
-- [x] Fixed Workspace bootstrap ordering: default permissions/roles are seeded before Tenant provisioning can activate the Workspace; bootstrap failure marks the Workspace FAILED and does not start Tenant provisioning.
-- [x] Added `apps/api/scripts/verify-workspace-bootstrap.cjs` and `test:workspace-bootstrap`; ordering and failure-state assertions PASS.
-- [x] API build and typecheck PASS after the source change.
-- [ ] Remaining: authentication rate limiting/CSRF/DTO hardening, password reset, Google Sign-In, bounded Tenant client cache/invalidation, formal Owner/Admin/Manager/Cashier/Inventory Staff permission matrix, and focused authorization tests.
-- No real database, migration, Prisma Client generation or deployment was performed.
-
-
-## Workspace Permission Matrix — 2026-11-05
-
-- [x] Define Owner, Admin, Manager, Cashier, Inventory Staff, Member and Viewer permissions in `docs/architecture/workspace-permission-matrix.md`.
-- [x] Map Store, branch, warehouse, Product Catalog, pricing, inventory, POS sales, orders and reports to explicit permission keys.
-- [x] Centralize permission definitions and default role grants in `apps/api/src/core/rbac/permission-catalog.ts`.
-- [x] Seed Admin, Manager, Cashier and Inventory Staff roles during Workspace bootstrap; preserve legacy Member and Viewer roles.
-- [x] Keep Platform Admin authorization separate from Workspace RBAC.
-- [x] API build, typecheck, Workspace bootstrap test and git diff --check PASS.
-- [ ] Before production: add endpoint-level authorization tests and branch/warehouse scope rules; design discount/refund approvals and sensitive margin permissions.
-- No real database migration or role reassignment of existing users was performed.
-
-
-## Store Management foundation — 2026-11-05
-
-- [x] Reuse the existing Tenant Store/Branch/Warehouse lifecycle instead of duplicating create/archive/default logic.
-- [x] Add a membership-scoped Store listing API with active Branch count and default Branch summary.
-- [x] Protect Store listing with `commerce.store.view`; Store creation remains protected by `commerce.store.manage`.
-- [x] Add the Workspace Store Management page with Store listing and create flow; creation automatically provisions the default Branch and Warehouse in the existing transaction.
-- [x] Add HTTP RBAC/tenant-isolation and query-service contract checks.
-- [x] API build/typecheck, Web build/typecheck, Store query tests and git diff --check PASS.
-- [ ] Next: Store detail/edit and Store status lifecycle; then dedicated Branch Management UI and endpoints.
-- No real Tenant/Control DB migration, Prisma Client generation, or deployment was performed.
-
-
-## Progress update — 2026-11-05 (Store Detail & Edit)
-
-### Current status
-- [x] Store Management listing and create flow: membership-scoped listing, active Branch/default Branch summary, permission enforcement and default Branch/Warehouse creation reuse.
-- [x] Store Detail API: GET is protected by `commerce.store.view`; PATCH is protected by `commerce.store.manage` and resolves the Tenant DB through the caller's Workspace membership.
-- [x] Store Edit: name, description, contact email/phone, address, currency and timezone; Store slug is read-only in the current UI.
-- [x] Store update uses a transaction and row lock, validates/normalizes input, and records before/after values in `STORE_UPDATED` audit data.
-- [x] Store listing cards navigate to the Store detail/edit page; edit controls are presented according to the current owner/admin/manager UI role check, with server-side RBAC remaining authoritative.
-- [x] Store edit service and HTTP contract checks, Store query service/HTTP checks, Tenant lifecycle HTTP checks and Workspace bootstrap checks — PASS.
-- [x] API build/typecheck and Web typecheck/build — PASS; `git diff --check` — PASS (line-ending warnings only).
-- [ ] Improve Store form currency/timezone selection beyond the current limited dropdown choices.
-- [ ] Implement Store status lifecycle and finish dedicated Branch Management UI/detail/edit flows.
-- No Prisma schema change, Prisma Client generation, real Tenant/Control DB migration or deployment was performed in this Store Detail & Edit task.
-
-### Progress measurement
-- Checklist snapshot in this plan at this update: 89 checked / 207 unchecked = 296 checkbox items; raw checkbox completion is **30.1%**. This is a mechanical count, includes duplicated/overlapping checklist items and does not weight task size.
-- Delivery estimate for the currently active Foundation + Store Management workstream is approximately **65%**; this is not the completion percentage of the entire SyncUp product roadmap.
-- Overall roadmap progress should therefore be communicated as **about 30% by raw checklist count**, with the active Foundation/Store workstream about 65%. Recalculate after deduplicating and weighting roadmap tasks for a more meaningful project KPI.
-
-### Next implementation sequence
-1. Branch Management UI and detail/edit flows, reusing the existing Branch/Warehouse lifecycle services and workspace/store scope.
-2. Warehouse Management UI and operational workflows.
-3. Product Catalog (categories, products, variants, SKU/barcode, UOM and pricing).
-4. Inventory operations UI (opening stock, receiving, issue, adjustment, transfer and movement history).
-5. POS Sales MVP.
-
-### Deployment gates (still blocking production rollout)
-- Confirm Tenant collation/ctype, maintenance/release/rollback plan and explicit named-target Migration Sign-off.
-- Control DB permission migrations and Tenant Commerce migration candidates remain unapplied to the real databases; no Prisma Client generation or production deployment is authorized by this progress update.
-- Backup/NAS implementation remains deferred per the user's instruction; do not resume it as part of the next feature phase without a new request.
-
-
-## Product API Read-only — 2026-11-06
-
-### Implementation status
-
-- [x] เพิ่ม `ProductsModule`, `ProductsController` และ `ProductQueryService` สำหรับ Product List, Product Detail และ SKU/Barcode Lookup
-- [x] ทุก Endpoint ใช้ GET และบังคับ `AuthGuard`, `RbacGuard`, `commerce.product.view`; Tenant DB ถูก resolve จาก Workspace Membership ผ่าน `WorkspaceDatabaseRegistry`
-- [x] Product List รองรับ Pagination, Status/Store filter และ Text Search; Detail แสดง Variant/UOM/Barcode; Lookup ค้นหา SKU และ Barcode แบบ exact match
-- [x] API typecheck และ build ผ่าน
-- [x] Manager authentication บน `pos-local` ผ่าน (HTTP 201)
-- [x] Manager GET Product List ผ่าน (HTTP 200); หลัง seed มีสินค้า 1 รายการ
-- [x] Negative checks ผ่านตามคาด: Detail ด้วย UUID ที่ไม่มีอยู่คืน HTTP 404
-- [x] Positive checks ของ Product Detail และ SKU/Barcode Lookup ผ่านบน `pos-local` เมื่อ 2026-11-06: Detail และ Lookup ทั้ง SKU และ Barcode ได้ HTTP 200 จากสินค้าทดสอบ `TEST-EA-001`
-
-### Test data preparation — completed 2026-11-06
-
-- [x] ผู้ใช้อนุมัติให้สร้างข้อมูลทดสอบหนึ่งสินค้า และอนุมัติ UOM `EA` (ชิ้น) เพื่อรองรับ Variant
-- [x] สร้างหรือยืนยัน UOM `EA` ใน Tenant DB `syncup_ws_c0130bf3c1c0`
-- [x] สร้าง Product ทดสอบหนึ่งรายการ พร้อม Variant, SKU และ Barcode
-- [x] ทดสอบ GET Product List, Product Detail และ SKU/Barcode Lookup ด้วยข้อมูลจริง แล้วบันทึก HTTP status และผลลัพธ์
-- [x] ตรวจสอบและยืนยันการเชื่อมต่อฐานข้อมูล `syncup_ws_c0130bf3c1c0` และ Schema `public` ที่มีตาราง Product ก่อน Seed
-
-**ข้อสังเกตการเตรียมข้อมูล:** ครั้งก่อน pgAdmin เจอ `relation "public.products" does not exist` และ SQLSTATE `25P02` เพราะ session ไม่ได้อยู่ที่ Tenant DB/schema ที่ migration ถูก apply แล้ว ตรวจเมื่อ 2026-11-06 ด้วย session ใหม่: `current_database() = syncup_ws_c0130bf3c1c0`, `current_schema() = public`, role `syncup_provisioner`, host `127.0.0.1` ตาราง `products`, `unit_of_measures`, `product_variants`, `variant_barcodes` และ `variant_uoms` มีอยู่ใน `public` และ ledger มี `202611030001_tenant_commerce`
-
-ข้อมูลทดสอบที่ commit แล้ว มีอย่างละ 1 แถว:
-- UOM `EA` / `ea`, ชื่อ `ชิ้น`, dimension `COUNT`
-- Product `สินค้าทดสอบ`, status `ACTIVE`, id `e91ad73d-dd00-435d-850d-25e1fb0b4994`
-- Variant SKU `TEST-EA-001`, barcode `8850000000017`, base UOM `EA`
-- Audit log action `PRODUCT_TEST_SEEDED`
-
-ผล HTTP ด้วย Manager ของ `pos-local` (`manager-e2e@syncup.local`):
-- GET Product List = 200, total 1, ชื่อ `สินค้าทดสอบ`, SKU `TEST-EA-001`
-- GET Product Detail = 200, UOM `EA`, barcode `8850000000017`
-- GET Lookup SKU `TEST-EA-001` = 200
-- GET Lookup barcode `8850000000017` = 200
-- GET Detail ด้วย UUID ที่ไม่มีอยู่ = 404
-
-### Scope and safety
-
-- ทดสอบ Product endpoints ด้วย GET เท่านั้น; การ POST Login ใช้เพื่อสร้าง Manager session สำหรับทดสอบ
-- เพิ่มข้อมูลทดสอบหนึ่งชุดใน `pos-local` แล้ว: UOM `EA`, Product, Variant, Barcode และ Audit log ตามที่อนุมัติ ไม่มีการเปลี่ยน Store, Branch, Warehouse หรือ Migration
-- Positive checks ของ Product Detail และ SKU/Barcode Lookup ผ่านด้วย HTTP 200 จาก `TEST-EA-001`
-- ขั้นถัดไปคือวางแผน Product Management UI และ Write APIs แยกเป็นขั้นตอน และขออนุมัติก่อนเปลี่ยนข้อมูลธุรกิจจริงเพิ่มเติม
-
-
-## Product Management E2E — 2026-11-06
-
-### Implementation and verification
-- [x] Add Playwright Product Management E2E covering Manager Create, Detail, Edit, exact SKU lookup, exact Barcode lookup and Archive.
-- [x] Verify Cashier can read Product List, Detail and Lookup, while Create, Update and Archive are rejected with HTTP 403.
-- [x] Verify Cashier Product Detail page is read-only and does not require the separate members.view permission.
-- [x] Fix Product page permission projection: GET /api/workspaces now includes only the current user's role keys; Product List/Detail no longer call the members listing API just to infer whether the current user can manage products.
-- [x] Add repeatable command npm run test:e2e:products in apps/web.
-- [x] API typecheck/build and Web typecheck/build — PASS.
-- [x] Playwright Product Management E2E — PASS (Manager lifecycle + Cashier read-only RBAC).
-
-### Isolated E2E data
-- Workspace: e2e-commerce-20261106; Tenant DB: syncup_ws_e65ca36b8068.
-- Added UOM EA / ea (ชิ้น) to this E2E tenant because it initially had no active UOM.
-- E2E created, edited, looked up and archived its Product/Variant; final status for Product and Variant is ARCHIVED.
-- Three unique E2E Product/Variant records were created during the initial failing attempt and two subsequent passing runs; all three are ARCHIVED and confined to the dedicated E2E tenant. The initial attempt exposed the Cashier page permission dependency; both complete reruns passed.
-- Cashier denied write attempts did not alter the final Product record.
-- No changes to pos-local, no production migration, no deployment and no commit/push were performed.
-
-### Follow-up
-- [ ] Add integration-level Product Command tests against an ephemeral PostgreSQL database for transaction rollback, duplicate SKU/barcode conflicts and multi-barcode preservation.
-- [ ] Keep E2E workspace Commerce lifecycle state unchanged; do not run module Enable/Disable tests as part of Product E2E.
-
+หากอนาคตต้องส่งข้อมูลระหว่าง Workspace ให้ทำผ่าน Integration ที่กำหนด:
+- Workspace ต้นทางและปลายทางอย่างชัดเจน
+- Entity และ Field ที่อนุญาตให้ส่ง
+- Mapping และ External ID
+- Preview และ Approval ก่อน Import
+- Idempotency, Retry, Dead-letter และ Audit
+- Source of Truth และ Conflict Resolution
+- การเพิกถอน Credential และหยุด Integration
 
 ---
 
-## Roadmap reconciliation and Inventory readiness — 2026-11-10
+## 3. Target Architecture
 
-สถานะนี้เทียบ Implementation/ผลทดสอบที่มีหลักฐานกับ Roadmap; ไม่ใช่การยืนยันว่าแต่ละ Phase ผ่าน Production Acceptance
+### 3.1 Logical Architecture
 
-### Workstream status
+```text
+                         SYNCUP PLATFORM
+                 Identity / Login / Workspace Registry
+                    Module Catalog / Provisioning
+                               |
+                    Workspace Selection / Membership
+                               |
+                 +-------------+-------------+
+                 |                           |
+          POS WORKSPACE                ONLINE WORKSPACE
+          Type = POS                   Type = ONLINE
+                 |                           |
+          POS Tenant DB                Online Tenant DB
+                 |                           |
+          POS Modules                  Online Modules
+          - POS Sales                  - Storefront
+          - POS Catalog                - Online Catalog
+          - Inventory                  - Cart / Checkout
+          - Cashier / Shift            - Online Orders
+          - POS Payments               - Gateway Payments
+          - Receipt                    - Fulfillment / Shipping
+                 |                           |
+          POS Media Storage            Online Media Storage
+          POS Configuration            Online Configuration
 
-| Workstream | สถานะ ณ 2026-11-10 |
+             No shared business tables / no implicit sync
+```
+
+### 3.2 Platform / Control Plane
+
+รับผิดชอบเฉพาะ:
+- User และ Authentication
+- Workspace Registry: ID, Slug, Name, Type, Status
+- Membership และ Platform-level administration
+- Tenant Database Registry และ Credential Reference
+- Module Catalog, Version และ Provisioning Profile
+- Workspace Lifecycle: PROVISIONING, ACTIVE, SUSPENDED, FAILED
+- Platform Audit และ Operational Metadata
+
+ห้ามเก็บข้อมูลธุรกิจ เช่น Product, Price, Stock, Customer, Order หรือ Payment ไว้ใน Control Database
+
+### 3.3 Workspace / Data Plane
+
+แต่ละ Workspace มี:
+- PostgreSQL Database ของตนเอง
+- Runtime DB Role ของตนเองและ Least Privilege
+- Tenant Migration Ledger และ Schema Version ของตนเอง
+- Module Installation/Configuration ตาม Workspace Type
+- Business RBAC และ Audit Log ของตนเอง
+- Media Namespace / Storage Policy ของตนเอง
+- Backup, Restore และ Retention Policy ของตนเอง
+
+### 3.4 Workspace Type และ Provisioning Profile
+
+กำหนด Workspace Type ที่ Control Plane:
+- `POS`
+- `ONLINE`
+
+Workspace Type ต้องถูกกำหนดตั้งแต่การสร้าง Workspace และแก้ไขได้เฉพาะผ่านกระบวนการ Migration/Conversion ที่ออกแบบและอนุมัติแยกต่างหาก ห้ามแก้ Type ด้วยการเปลี่ยนค่าใน UI หรือ SQL แบบเฉพาะหน้า
+
+Provisioning Profile เป็นตัวกำหนด:
+- Tenant Schema Baseline
+- Module Set
+- Default Roles/Permissions
+- Default Settings
+- Navigation และ Workspace Landing Page
+- Seed Data ที่เป็น System Defaults เท่านั้น
+
+ห้าม Seed ข้อมูลธุรกิจตัวอย่างลง Workspace ที่จะใช้งานจริงโดยไม่มีการระบุว่าเป็นข้อมูลทดสอบ
+
+---
+
+## 4. Product Architecture — SyncUp POS
+
+### 4.1 POS Workspace Modules
+
+| Module | หน้าที่ |
 |---|---|
-| Foundation / Workspace / RBAC | Implemented with remaining production gaps; ต้องทำ full role-grant reconciliation และ production security gates |
-| Store / Branch / Warehouse | Core management implemented: list/create/detail/edit, default/archive lifecycle และ service/HTTP tests |
-| Product Catalog | Core Product management implemented: list/detail/create/edit/archive, SKU/Barcode lookup และ Manager/Cashier E2E; Categories, images, multi-UOM pricing และ Public Store ยังไม่ครบ |
-| Inventory | Receive, Issue, Adjustment, Transfer, Movement History และ Stocktake API/UI พร้อม E2E; RBAC/idempotency/concurrency hardening ผ่าน |
-| POS / Order / Payment | ยังไม่ครบ workflow; Phases 3–4 ยังเป็นงานถัดไปหลัง Catalog/Inventory acceptance |
-| Public Store / Guest Checkout | ยังไม่ implement; Phases 1 Public Store และ 5 Checkout ยังไม่ผ่าน |
-| Backup / Recovery | Local backup/restore rehearsal ผ่าน; encrypted off-host backup/restore ยังเป็น gate เปิดอยู่ |
+| POS Foundation | Store, Branch, Register, Terminal และ Shift |
+| POS Catalog | Product, Variant, Barcode, UOM และ POS Price |
+| POS Inventory | Warehouse, Stock, Receiving, Transfer, Adjustment และ Stocktake |
+| POS Checkout | Product Search, Cart, Discount, Tax และ Sale Posting |
+| POS Tender | Cash, Card, QR และการบันทึกการรับชำระ |
+| POS Returns | Void, Return, Refund และ Permission Control |
+| POS Receipt | Receipt Number, Print, Reprint และ Audit |
+| POS Reports | Sales Summary, Shift Summary, Cash Reconciliation และ Stock Reports |
+| POS Settings | Store, Tax, Pricing, Register, Receipt และ Staff |
 
-### Inventory scope ที่เสร็จแล้ว แต่ยังไม่เท่ากับ Phase 2 complete
+### 4.2 POS User Roles
 
-- Reservation lifecycle/concurrency tests, Receive/Issue/Adjustment/Transfer และ Movement History มี implementation และ tests
-- Stocktake API/UI ผ่านบน E2E Tenant ที่มี Stocktake schema migration
-- Transfer เป็น atomic paired movement ไม่ใช่ workflow ส่ง/รับแบบสองขั้นตาม checklist เดิม
-- Opening Stock ต่อ Warehouse ยังไม่ถือว่าเสร็จ; Stocktake ไม่ใช่ตัวแทน Opening Stock
-- ยังไม่มี Sales/Order integration จึงยังไม่ถือว่า Cost Snapshot ณ เวลาขายหรือ concurrent sale ผ่าน
-- `pos-local` มี StockBalance/InventoryCost/StockMovement เป็น 0 แถว จึงยังรับรอง WAC/Inventory Value จากธุรกรรมจริงไม่ได้
+- Owner — เจ้าของ Workspace และผู้อนุมัติการตั้งค่าระดับสูง
+- Admin — ผู้ดูแลระบบหน้าร้าน
+- Manager — ดูแลการขาย พนักงาน และอนุมัติรายการตามสิทธิ์
+- Cashier — ขาย รับชำระ และปิดกะตามสิทธิ์
+- Inventory Staff — รับเข้า โอน ปรับปรุง และตรวจนับสต๊อกตามสิทธิ์
+- Viewer — อ่านข้อมูลที่ได้รับอนุญาต
 
-### pos-local Readiness findings — 2026-11-10
+Role และ Permission ทั้งหมดผูกกับ POS Workspace เท่านั้น
 
-- Store/Branch/Warehouse เริ่มต้น Active และ Default ถูกต้อง; Store ยังไม่ Published
-- มี Owner และ Manager membership; ยังไม่มีผู้ใช้ที่ได้รับมอบหมาย Admin, Cashier หรือ Inventory Staff
-- Admin permission grants ยังไม่ตรงกับ Default Role Matrix; ต้อง reconcile ทุก Permission Catalog key ไม่ใช่ Apply migration candidate 005 แล้วสันนิษฐานว่าครบ
-- `stocktake_sessions` / `stocktake_lines` ยังไม่มีใน `pos-local`; `GET /inventory/stocktakes` ตอบ HTTP 500 จาก schema gap
-- Local Backup/Restore ผ่าน แต่ encrypted off-host Backup/Restore ยังเป็น deployment blocker
-- ผลตรวจเป็น Read-only; ไม่มีการเปลี่ยน Role, Business data, Tenant/Control schema หรือ Migration Ledger
+### 4.3 POS Core Workflow
 
-รายละเอียด Findings และ Remediation Plan อยู่ใน `docs/operations/inventory-operational-readiness-remediation-plan-2026-11-10.md`.
+1. เปิดกะ (Open Shift) และบันทึกเงินทอนเริ่มต้น
+2. ค้นหาสินค้า/สแกน Barcode
+3. เพิ่มสินค้าและปรับจำนวนใน Cart
+4. ตรวจสอบราคา ส่วนลด ภาษี และ Stock ฝั่ง Server
+5. ยืนยันการขายและสร้าง Sale Order แบบ Idempotent
+6. บันทึก Tender/Payment และสถานะการชำระ
+7. ออก Receipt และพิมพ์ซ้ำตาม Permission
+8. ปิดกะและกระทบยอดเงินสด/ช่องทางชำระเงิน
+9. จัดการ Return/Refund โดยอ้างอิงรายการเดิมและ Audit
 
-### ลำดับงานถัดไปที่มีผลบังคับใช้
+### 4.4 POS Production Requirements
 
-ลำดับนี้ supersede Next Steps เดิมวันที่ 2026-11-05 สำหรับช่วง Inventory Operational Readiness:
+- ข้อมูลสินค้า Variant UOM Barcode และราคา POS จริง
+- Tax Category/Profile/Rate ที่ได้รับการตรวจสอบ
+- Opening Stock และ Inventory Reconciliation
+- Seller/Branch/Receipt Identity
+- Shift และ Cash Reconciliation
+- Printer/Scanner/Cash Drawer Compatibility Test
+- Backup เข้ารหัสและ Restore Rehearsal
+- RBAC และ E2E สำหรับ Owner/Manager/Cashier/Inventory
+- ไม่มีการคิดเงินผ่าน Gateway หากยังไม่ได้เชื่อมต่อและทดสอบจริง
 
-1. **R1 — Full RBAC reconciliation (Read-only):** เทียบ Permission Catalog, Control DB permission rows, role_permissions และ Role existence กับ `workspace-permission-matrix.md`.
-2. **R2 — RBAC remediation candidate:** จัดทำ forward-only SQL/test plan จาก diff ที่พิสูจน์แล้ว; ห้าม Apply หรือเปลี่ยน membership assignment โดยไม่มีอนุมัติ
-3. **R3 — Stocktake migration review:** ตรวจ candidate SQL, Prisma schema, migration runner และ API compatibility; ห้าม Apply กับ `pos-local` ในขั้นนี้
-4. **R4 — Backup/deployment preflight:** ต้องมี encrypted off-host backup + restore verification, maintenance window และ rollback plan ก่อนการเปลี่ยน Tenant จริง
-5. หลังจากนั้นจึงขออนุมัติแยกสำหรับ Control DB RBAC changes, Tenant Stocktake migration และ Opening Inventory data
+---
 
-### วิธีรายงานความคืบหน้า
+## 5. Product Architecture — SyncUp Online
 
-- ค่า 30.1% ใน Progress update 2026-11-05 เป็น raw checkbox count ณ วันนั้นและล้าสมัยแล้ว
-- ห้ามอ้างตัวเลขดังกล่าวเป็นความคืบหน้าปัจจุบัน; หลาย checklist items เป็น composite scope และ Implementation ล่าสุดยังไม่ได้ reconcile กลับทุก checkbox
-- ใช้ Workstream status และ Readiness gates ด้านบนจนกว่าจะทำ checklist mapping/deduplication ครบถ้วน
+### 5.1 Online Workspace Modules
 
-งาน reconciliation นี้ไม่มี Migration, Production deployment, commit หรือ push.
+| Module | หน้าที่ |
+|---|---|
+| Online Store | Storefront, Theme, Domain, Store Status |
+| Online Catalog | Product, Variant, Category, SEO และ Publish |
+| Media Library | Product Images, Gallery, Derivatives และ Bulk Import |
+| Online Pricing | Online Price List, Promotion และ Discount |
+| Cart | Guest Cart, Session และ Cart Validation |
+| Checkout | Customer, Address, Shipping Option, Tax และ Order Creation |
+| Online Payment | Gateway Adapter, Payment Intent, Webhook และ Refund |
+| Online Orders | Order Management, Cancellation และ Return |
+| Fulfillment | Picking, Packing, Shipment และ Tracking |
+| Customer | Online Customer Profile และ Order History |
+| Online Reports | Conversion, Sales, Payment และ Shipping |
+| Online Settings | Domain, SEO, Tax, Payment, Shipping และ Policy |
 
+### 5.2 Online User Roles
 
-## R1 — Full RBAC reconciliation result — 2026-11-10 (Read-only)
+- Owner
+- Admin
+- Manager
+- Catalog Staff
+- Order Staff
+- Fulfillment Staff
+- Customer Support
+- Viewer
 
-- [x] เทียบ Application Permission Catalog 30 keys กับ Control DB permission rows: พบ 31 rows เพราะมี legacy `commerce.inventory.manage` เพิ่มอีก 1 key
-- [x] เทียบ Role grants: Admin expected 30 / actual 12 (missing 19, unexpected legacy 1); Manager expected 27 / actual 27 (exact match)
-- [x] ตรวจ Role rows: มี admin/manager/member/viewer; ไม่มี cashier และ inventory_staff
-- [x] ตรวจ Membership: Owner 1 (ownership bypass) และ Manager 1; ไม่มี Cashier/Inventory Staff assignment
-- [x] ตรวจ Migration ledger: 001/002 applied; 003/004 ไม่มี ledger row แต่มี schema effects ที่เคยตรวจพบ; 005 ยังไม่ applied
-- [x] ยืนยันว่า migration candidate 005 ไม่เพียงพอ: Manager มี 3 inventory grants อยู่แล้ว; Admin ยังขาด 16 grants หลังเพิ่ม 3 keys; Inventory Staff role ยังไม่มี
-- [x] พบว่า `WorkspacesService.listRoles()` เรียก `ensureDefaultRoles()` ซึ่งทำ database writes จาก read/list path; ห้ามใช้ endpoint นี้ใน Read-only audit จนกว่าจะแยก provisioning ออกจาก GET path
-- R1 เสร็จแบบ Read-only; ไม่มี database mutation หรือ Role assignment
-- R2 ต้องเตรียม migration/role provisioning strategy ใหม่ และทำ Control migration ledger reconciliation ก่อน ห้ามใช้ `prisma migrate deploy` แบบเหมารวม หรือสร้าง migration ledger rows ย้อนหลัง
-- รายละเอียด: `docs/operations/inventory-operational-readiness-remediation-plan-2026-11-10.md`
+Role และ Permission ของ Online Workspace ไม่เชื่อมกับ POS Workspace
 
+### 5.3 Online Customer Workflow
 
-## R2 status - 2026-11-10
+1. ผู้เข้าชมเปิด Public Store โดยไม่ต้อง Login
+2. อ่านเฉพาะ Product/Variant ที่ Published
+3. เลือก Variant และเพิ่ม Cart
+4. ตรวจสอบราคา Promotion Tax และ Availability ฝั่ง Server
+5. กรอกข้อมูลผู้ซื้อและที่อยู่จัดส่ง
+6. เลือก Shipping Option
+7. สร้าง Order และ Payment Intent
+8. รับผลชำระผ่าน Gateway Webhook ที่ตรวจ Signature
+9. ดำเนินการ Picking/Packing/Shipping
+10. แสดง Order Tracking ผ่าน Token ที่เดายาก
+11. จัดการ Cancel/Return/Refund ตาม Policy
 
-- Read-only reconciliation confirms Migration 003 schema effects and Migration 004 runtime grants are present and match current SQL, but neither has a Control Prisma ledger row.
-- Migration 005 remains unapplied and on hold; it is not a complete RBAC remediation.
-- Do not rerun 003/004, run prisma migrate deploy, or insert historical ledger rows.
-- The owner must decide whether to explicitly authorize Prisma migrate resolve --applied for exactly 003/004 after review, or retain the no-backfill rule and approve a separate migration-lineage/runner redesign. No option has been executed.
-- Detailed evidence and disposition are appended to docs/operations/inventory-operational-readiness-remediation-plan-2026-11-10.md.
-- Drafted the pos-local RBAC remediation design (Admin 30, Manager 27 unchanged, Cashier 7 role provisioned without membership assignment, Inventory Staff remains on-demand/13, Member/Viewer untouched); it is documented but not an executable or approved migration.
-- Candidate design requires read-only preflight, additive idempotent grants, no membership changes, preservation of legacy commerce.inventory.manage, and a separate fix/test for listRoles GET-side effects.
+### 5.4 Online Security Requirements
 
-- R2 rehearsal PASS (2026-11-10): Prisma migrate resolve --applied for exactly Control migrations 003/004 succeeded on a disposable restore; checksums matched and migrate status left 005 as the only pending migration. Live Control DB remains untouched pending explicit approval.
-- RBAC candidate rehearsal PASS on a separate disposable restore: Admin 30 catalog grants plus preserved legacy grant; Manager unchanged at 27; Cashier created with 7 grants; Inventory Staff remains on-demand; memberships, other workspaces, permission catalog and migration ledger unchanged; second run idempotent.
-- Evidence: docs/operations/r2-migration-rbac-rehearsal-2026-11-10.md. Candidate SQL is docs/operations/pos-local-rbac-remediation-candidate-2026-11-10.sql and is not an active migration.
-- Approval gates remain separate: live Control ledger resolution for 003/004; RBAC candidate application to pos-local. Migration 005 and Stocktake remain on hold.
-- Stocktake candidate SQL rehearsal PASS on a disposable restore of the pinned pos-local Tenant backup. Verified two tables, 12/9 columns, enum values, seven named constraints, six indexes, empty tables and unchanged Tenant ledger. Live pos-local read-only audit confirms runtime default CRUD grants; TenantMigrationRunner currently applies only baseline, so a dedicated approved incremental executor is still required. No live DB change. See docs/operations/r2-migration-rbac-rehearsal-2026-11-10.md.
+- Public API เปิดเฉพาะ Published Catalog และข้อมูลที่อนุญาต
+- ห้ามเปิดเผย Cost, Internal Stock, Private Customer Data และข้อมูล POS
+- ราคากับภาษีคำนวณใหม่จาก Server ห้ามเชื่อค่าจาก Browser
+- Webhook ต้องตรวจ Signature, Replay และ Idempotency
+- Guest Order ต้องใช้ Unpredictable Access Token
+- Rate Limit, Bot/Abuse Protection และ Input Validation
+- Privacy, Consent, Retention และ Data Export/Delete Policy
+- Domain/SSL และ Public Media Delivery ต้องแยกตาม Online Workspace
 
+---
 
-## Checkpoint — 2026-11-10: pos-local Stocktake migration and UI verification
+## 6. Shared Platform Contracts และ Module Boundary
 
-### Completed
-- Applied `20261107000100_tenant_inventory_stocktake` to the `pos-local` Tenant database `syncup_ws_c0130bf3c1c0` after explicit approval. The migration SQL and Tenant ledger insert were committed atomically by the guarded incremental migration executor.
-- Created and verified a pre-migration custom-format backup at `D:\Back up\SyncUp\Backups\pos-local_pre_stocktake_20261110044830.dump`; SHA256 `b78890368bf2014664c38bb1e817d84f6716f0f8768d37b56010db6ebbe0ac40`. Backup is local and not encrypted; off-host encrypted backup remains an outstanding operational task.
-- Post-migration read-only verification PASS: 2 Stocktake tables, expected columns/enums/constraints/indexes, empty initial tables, 3 Tenant migration ledger entries, and runtime CRUD grants limited to Stocktake tables. Runtime role cannot insert into migration ledger.
-- API typecheck/build PASS. `pos-local` Manager HTTP inventory/Stocktake E2E PASS, including idempotency, validation, stale snapshot guard, WAC, transfer concurrency and fixture cleanup.
-- Browser UI E2E PASS (1/1) using the `pos-local` Manager login. This test stubs Stocktake API responses and verifies the UI flow; the separate Manager HTTP E2E above exercises the real API/database.
-- Added `apps/web/e2e/pos-local-stocktake-ui.spec.ts` and operational executor, rehearsal, backup and verification scripts/reports under `apps/api/scripts/` and `docs/operations/`.
-- `pos-local` RBAC remediation is applied and verified: Admin has all 30 catalog grants plus preserved legacy grant; Manager unchanged; Cashier role has 7 grants; Inventory Staff remains provisioned on demand.
+### 6.1 Shared Contracts
 
-### Current safeguards and remaining work
-- No deployment, commit or push was performed as part of the database migration/UI verification.
-- Control DB migration ledger resolution for Control migrations 003/004 was approved in a separate step but has not been executed; do not claim it is reconciled. Control migration 005 remains unreconciled and must not be deployed as-is.
-- At the time of this checkpoint, Opening Stock per Warehouse was still outstanding; it was implemented in the subsequent checkpoint below. Stocktake remains a separate workflow.
-- Off-host encrypted backup and key-recovery design remain open. The existing local backup is not encrypted.
-- Preserve the distinction between `e2e-commerce-20261106` and production-like `pos-local`; do not reuse E2E fixtures against production data.
+อนุญาตให้ใช้ Shared Contract สำหรับ:
+- Money/Decimal/Quantity
+- Tax Calculation Interface (แต่ Tax Configuration เป็นข้อมูลเฉพาะ Workspace)
+- Product Read Model Interface (แต่ Product Record ไม่แชร์)
+- Inventory Command/Query Interface (แต่ Stock Ledger ไม่แชร์)
+- Order State Machine primitives (แต่ Order Record ไม่แชร์)
+- Payment Provider Adapter Interface (แต่ Payment Account/Transaction ไม่แชร์)
+- Media Storage Interface (แต่ Asset/Namespace ไม่แชร์)
 
-### Recommended next implementation
-1. Completed in the subsequent Opening Stock checkpoint below.
-2. Add real-browser UI/API integration coverage for Stocktake against `pos-local` only when a controlled test fixture and cleanup plan are in place.
-3. Resolve the Control migration ledger state only within the exact previously approved 003/004 scope; review migration 005 separately.
-4. Complete encrypted off-host backup and restore/key-recovery verification before treating backup readiness as production-grade.
+### 6.2 Module Isolation
 
+- Module ต้องประกาศ Workspace Type ที่รองรับ
+- Module ที่เป็น POS-only ห้ามติดตั้งใน Online Workspace
+- Module ที่เป็น Online-only ห้ามติดตั้งใน POS Workspace
+- Shared Platform Module ไม่มีสิทธิ์ Query Tenant Business Data โดยตรง
+- Module API ทุกตัวต้องรับ Workspace Context จาก Trusted Server Context
+- Module ไม่สามารถเลือก Tenant DB จาก Client-supplied database name
+- Module Upgrade ต้องมี Version, Migration, Rollback/Forward Plan และ Compatibility Check
 
-## Checkpoint — 2026-11-10: Opening Stock per Warehouse implementation
+### 6.3 Suggested Module Profiles
 
-### Implemented
-- Added `OpeningStockService` and `OpeningStockController` in the Inventory module:
-  - `GET /api/tenant/:workspaceId/inventory/opening-stocks` — paginated list and status/warehouse filters.
-  - `POST /api/tenant/:workspaceId/inventory/opening-stocks` — create a DRAFT session with multi-line variant quantities and unit costs.
-  - `GET /api/tenant/:workspaceId/inventory/opening-stocks/:openingStockId` — session detail.
-  - `PATCH /api/tenant/:workspaceId/inventory/opening-stocks/:openingStockId` — edit DRAFT reference, notes and lines; posted/cancelled sessions are immutable.
-  - `POST .../:openingStockId/post` — atomically post all lines.
-  - `POST .../:openingStockId/cancel` — cancel DRAFT only.
-- Reused the existing Tenant schema and database objects (`OpeningStockSession`, `OpeningStockItem`, `OpeningStockStatus`, and the unique `posted_warehouse_id` index). A read-only audit confirmed the tables, columns, unique indexes, enum values and runtime CRUD grants already exist in `pos-local`; no migration or Production database write was performed.
-- Posting writes StockBalance and InventoryCost, creates `StockMovementType.OPENING` with `StockReferenceType.OPENING_STOCK`, and writes audit events in the same transaction. Opening cost initializes WAC and inventory value directly from quantity × unit cost.
-- Safety rules: one posted Opening Stock session per Warehouse; unique variants per draft; positive quantities up to 3 decimals; non-negative unit cost up to 6 decimals; idempotency replay checks the complete payload; changed payload returns conflict; posting is atomic and row-locked; an item with prior movement history or non-empty balance/cost cannot be initialized; a posted session cannot be cancelled.
-- Uses existing `commerce.inventory.receive` permission for create/post/cancel and `commerce.inventory.view` for list/detail; no new Control RBAC migration was required.
-- Added UI at `/workspace/[slug]/inventory/opening-stock` with multi-line entry, DRAFT editing, CSV import by SKU/quantity/unitCost (including a downloadable template), draft review, post confirmation, cancellation, list/detail and navigation from Inventory/Stocktake. Movement history now displays and filters `OPENING` as “ยอดยกมา”.
-- Added `apps/api/scripts/verify-opening-stock-http-e2e.cjs` and `apps/web/e2e/opening-stock-ui.spec.ts`.
+**POS Profile**
+- platform.identity
+- platform.workspace
+- platform.rbac
+- platform.audit
+- pos.foundation
+- pos.catalog
+- pos.inventory
+- pos.sales
+- pos.tender
+- pos.receipt
+- pos.reporting
 
-### Verification
-- API typecheck PASS; API build PASS.
-- Web typecheck PASS; Web production build PASS.
-- Real API/DB HTTP E2E on `e2e-commerce-20261106` PASS: Inventory Staff create permission, Cashier denied with HTTP 403, create/replay, payload conflict 409, concurrent post (exactly one movement), WAC/InventoryCost/StockBalance reconciliation, movement history filter, one-post-per-warehouse conflict 409, and fixture cleanup.
-- Browser UI E2E PASS (1/1). Opening Stock endpoints and supporting catalog/warehouse data are stubbed in this UI test; the separate HTTP E2E above exercises the real API/database.
-- API lint could not run because ESLint is not installed in the API workspace. Web lint is currently blocked by the repository's ESLint 9 configuration (no `eslint.config.*`); these are tooling/configuration issues, not passing lint checks.
-- No migration, live `pos-local` inventory mutation, deployment, commit or push was performed for this implementation. E2E fixtures were cleaned up.
+**ONLINE Profile**
+- platform.identity
+- platform.workspace
+- platform.rbac
+- platform.audit
+- online.store
+- online.catalog
+- online.media
+- online.pricing
+- online.cart
+- online.checkout
+- online.payment
+- online.fulfillment
+- online.reporting
 
-### Follow-up
-1. Completed 2026-11-11: CSV export for selected Opening Stock documents and all-or-nothing bulk CSV validation preview (per-row status/reason; confirm enabled only when every row is valid).
-2. Completed 2026-11-11: Opening Stock permission-specific HTTP assertions for Cashier and Viewer.
-3. Keep Opening Stock as a one-time baseline workflow; use Direct Receiving for subsequent inbound stock and Stocktake for physical count reconciliation.
+รายการนี้เป็น Target Module Profile ไม่ใช่คำยืนยันว่า Module ทั้งหมดมี Implementation พร้อมแล้ว
 
-### Follow-up verification — 2026-11-11
-- Added DRAFT edit endpoint and UI. PATCH locks the session row, rejects non-DRAFT state, validates active variants and duplicate variants, replaces item lines atomically, and writes a draft-update audit event.
-- Preserved create idempotency semantics across edits by storing the original create payload in the `OPENING_STOCK_CREATED` audit metadata. Replaying the original key/payload after an edit still resolves to the original session; a changed payload remains HTTP 409. Legacy DRAFT records receive their original payload snapshot on first edit.
-- Added CSV import with case-insensitive SKU matching, duplicate/unknown SKU detection, quantity/cost validation, quoted-field parsing, a 2 MB file-size limit, a 500-item limit, and template download. Import is available when creating or editing a DRAFT.
-- API HTTP E2E PASS on `e2e-commerce-20261106`: edit DRAFT, verify edited values, replay original create payload after edit, verify posting, verify PATCH after post returns HTTP 409, reconcile quantity/WAC/inventory value/movement and cleanup.
-- Browser UI E2E PASS (1/1): create DRAFT, enter edit mode, import CSV, save edited draft, then post. API/data endpoints remain stubbed in this browser test.
-- API typecheck/build PASS; Web typecheck/production build PASS.
-- Follow-up: selected document CSV export includes SKU, product/variant, quantity, unit cost, total cost and UOM. CSV import now presents a row-by-row validation preview and only permits all-valid imports; invalid SKU and disabled-confirm behavior are covered by Playwright.
-- Browser UI E2E PASS (1/1) including invalid-row preview, successful import confirmation, Draft edit, Post and CSV download.
-- No migration, live `pos-local` database write, deployment, commit or push was performed.
+---
 
-### Opening Stock RBAC verification — 2026-11-11
-- Extended `apps/api/scripts/verify-opening-stock-http-e2e.cjs` with role-specific checks against a real DRAFT in the dedicated `e2e-commerce-20261106` workspace.
-- Cashier: list/detail access remains allowed; create, DRAFT edit and post all return HTTP 403.
-- Viewer: this E2E workspace has no dedicated Viewer account, so the existing Cashier membership was temporarily switched to the existing `viewer` role for the HTTP checks. Viewer list/detail and create/edit/post all return HTTP 403 (the Viewer role does not have `commerce.inventory.view`). The original Cashier membership role was restored in `finally` and independently verified.
-- Opening Stock HTTP E2E PASS; general inventory RBAC smoke test PASS (4 roles, 36 authorization assertions); API typecheck/build PASS.
-- E2E fixture cleanup passed. No production workspace, production role, tenant migration, deployment, commit or push was performed.
+## 7. Identity, Membership และ Authorization
 
-## Checkpoint — 2026-11-11: Inventory end-to-end regression verification
+### 7.1 Identity
 
-### API / database workflows
-- `apps/api/scripts/verify-inventory-http-e2e.cjs` PASS on `e2e-commerce-20261106`: Receive, Issue, Adjustment In/Out, Movement History filters/pagination, Transfer paired movements, idempotency replay, validation/rollback, stale Stocktake snapshot, Stocktake finalize/cancel, and transfer concurrency (same-key and distinct-key parallel requests).
-- `apps/api/scripts/verify-opening-stock-http-e2e.cjs` PASS: Opening Stock create/edit/post, original-payload idempotency after Draft edit, RBAC negative assertions and fixture cleanup.
-- `apps/api/scripts/verify-e2e-inventory-rbac-http.cjs` PASS: 4 roles and 36 authorization assertions.
-- `apps/api/scripts/verify-stocktake-ui-real-api-e2e.cjs` PASS after starting the local Web server: real browser create/count/finalize against API and database; WAC 5.181818, inventory value 57.000000, one `ADJUSTMENT_IN` movement; fixture and audit cleanup PASS.
+- หนึ่ง User Account ใช้ Login ได้หลาย Workspace
+- User Account ไม่ใช่ Business Customer Record
+- Customer ของ Online Workspace เป็นข้อมูลธุรกิจภายใน Online Tenant
+- POS Customer (ถ้ามี) เป็นข้อมูลภายใน POS Tenant
+- การปิด User Account ระดับ Platform อาจกระทบการ Login ทุก Workspace แต่การ Remove Membership กระทบเฉพาะ Workspace เป้าหมาย
 
-### Browser UI regression
-- Playwright PASS: 6/6 across `inventory-management.spec.ts`, `opening-stock-ui.spec.ts` and `pos-local-stocktake-ui.spec.ts`.
-- Corrected stale `pos-local-stocktake-ui.spec.ts` expectations: it previously relied on obsolete element IDs and attempted to run an Inventory Staff account from the E2E workspace against `pos-local`. The POS-local spec now checks the current accessible controls for its Manager scenario; Inventory Staff permission coverage remains in the E2E-workspace spec.
-- Web TypeScript typecheck PASS; Next.js production build PASS.
+### 7.2 Authorization Layers
 
-### Scope / safety
-- All API fixture tests ran against the dedicated local E2E workspace and cleaned up test records/audit rows.
-- Real-browser Stocktake API test used the same E2E workspace; no business fixture remained.
-- No production `pos-local` database mutation, migration, permission change, deployment, commit or push was performed.
-- `git diff --check` PASS. Existing unrelated worktree changes were preserved.
+1. Platform Authentication — ยืนยันตัวตนผู้ใช้
+2. Workspace Membership — ตรวจว่าผู้ใช้เป็นสมาชิก Workspace นั้น
+3. Workspace Status — ตรวจ ACTIVE/SUSPENDED
+4. Workspace Type — ตรวจว่า Module/API รองรับ Type นั้น
+5. Tenant Context — Resolve Database จาก Registry ฝั่ง Server
+6. Workspace RBAC — ตรวจ Permission ของ Membership ใน Workspace นั้น
+7. Resource Scope — ตรวจว่า Resource อยู่ใน Tenant/Store/Branch ที่อนุญาต
+
+การซ่อนเมนูใน Frontend ไม่ใช่มาตรการรักษาความปลอดภัย
+
+### 7.3 Workspace Switching
+
+- ผู้ใช้เลือก Workspace จาก Workspace Selector
+- Server ตรวจ Membership ใหม่ทุกครั้งที่เปลี่ยน Workspace
+- API Request ต้องมี Trusted Workspace Context
+- Cache Key, Session Context, Idempotency Key และ Audit ต้องมี Workspace Scope
+- ห้ามใช้ข้อมูล Cache ของ Workspace ก่อนหน้าใน Workspace ใหม่
+
+---
+
+## 8. Database, Storage และ Operations
+
+### 8.1 Database Isolation
+
+- Control DB แยกจาก Tenant DB ทุกตัว
+- POS Tenant DB และ Online Tenant DB แยกจากกัน
+- แต่ละ Tenant DB มี Runtime Role เฉพาะและ Least Privilege
+- Migration Ledger และ Schema Version แยกตาม Tenant
+- ห้าม Runtime Role เข้าถึง Database ของ Tenant อื่น
+- ห้าม Foreign Key ข้าม Database
+- Backup/Restore ต้องระบุ Workspace ID และ Database เป้าหมายอย่างชัดเจน
+
+### 8.2 Media / File Isolation
+
+- POS Media และ Online Media ต้องมี Namespace/Storage Policy แยกกัน
+- Object Key ต้องไม่อิงชื่อไฟล์จากผู้ใช้โดยตรง
+- ตรวจ MIME จากเนื้อหาไฟล์จริง, จำกัดขนาด/Pixel, สร้าง Derivative และ Checksum
+- Private Media ต้องอ่านผ่าน Authorized Endpoint
+- Public Media อนุญาตเฉพาะ Asset ที่ Published โดย Online Workspace
+- Storage Root/Bucket ต้องเป็น Durable Storage ไม่ใช่ Ephemeral Container Disk
+- Backup/Restore ต้องรวม Metadata และไฟล์จริงให้สอดคล้องกัน
+- Local Filesystem Adapter ที่มีอยู่เป็น Implementation เริ่มต้น; Production ต้องตรวจ Shared Volume, Multi-instance และ Backup/Restore ก่อนเปิดใช้
+
+### 8.3 Audit / Observability
+
+ทุก Business Event สำคัญต้องบันทึก:
+- Workspace ID
+- Actor / Service Identity
+- Action และ Entity
+- Correlation ID / Idempotency Key
+- Timestamp
+- Outcome และเหตุผลที่ปฏิเสธ
+
+ห้ามเขียน Secret, Password, Access Token หรือข้อมูลชำระเงินที่ละเอียดอ่อนลง Log
+
+### 8.4 Backup / Recovery
+
+- Control DB และ Tenant DB มี Backup Policy แยก
+- Backup ต้องเข้ารหัสและมีสำเนา Off-host
+- Media Storage ต้องอยู่ใน Backup/Restore Scope
+- กำหนด RPO/RTO ตามระดับบริการ
+- ทดสอบ Restore จริงเป็นระยะ
+- การ Restore ต้องป้องกันการเขียนทับ Workspace ผิดตัว
+
+---
+
+## 9. Workspace Lifecycle
+
+### 9.1 Create Workspace
+
+1. ผู้ใช้เลือก Create POS Workspace หรือ Create Online Workspace
+2. ตรวจสิทธิ์/Entitlement และ Slug
+3. สร้าง Workspace Registry Record พร้อม Type ที่เลือก
+4. Provision Database ใหม่จาก Profile ที่ตรงประเภท
+5. สร้าง Runtime Role/Credential แบบเฉพาะ Workspace
+6. Apply Baseline Migration และ Module Migrations ตามลำดับ
+7. ติดตั้ง Module Profile และ Default RBAC
+8. สร้าง Owner Membership
+9. ตรวจ Health/Schema/Permissions/Storage
+10. เปลี่ยน Status เป็น ACTIVE เมื่อทุก Gate ผ่าน
+
+หากขั้นตอนล้มเหลวต้องเป็น FAILED และไม่อนุญาตให้เข้าใช้งานจนกว่าจะ Reconcile สำเร็จ
+
+### 9.2 Suspend / Resume / Delete
+
+- Suspend ต้องปิดการเข้าถึง Business API แต่ไม่ลบข้อมูล
+- Resume ต้องตรวจ Tenant Health, Schema และ Credential
+- Delete ต้องมี Retention, Approval, Backup และ Irreversible Confirmation
+- ห้ามลบ Tenant DB จากการลบ Membership ของ User
+- การลบ Workspace เป็น Platform Lifecycle Operation แยกต่างหาก
+
+### 9.3 Workspace Type Change
+
+ไม่รองรับการเปลี่ยน POS เป็น ONLINE หรือกลับกันด้วยการแก้ Type ตรง ๆ
+
+หากต้องการอีกระบบ ให้สร้าง Workspace ใหม่และนำเข้าข้อมูลผ่าน Controlled Import ในอนาคตเท่านั้น
+
+---
+
+## 10. Roadmap ใหม่ — ลำดับการพัฒนา
+
+Roadmap นี้เป็นลำดับหลักแทน Phase/Omnichannel Roadmap เดิม
+
+### Track 0 — Platform Separation Foundation (P0)
+
+**เป้าหมาย:** ทำให้ Platform สร้างและควบคุม Workspace ที่เป็นคนละผลิตภัณฑ์ได้จริง
+
+- [x] P0.1 กำหนด Workspace Type: POS / ONLINE ใน Control Plane — DONE (implementation + disposable migration rehearsal PASS; persistent DB migration ยังไม่ Apply)
+- [x] P0.2 เพิ่ม Provisioning Profile และ Module Compatibility — DONE (POS/ONLINE code-backed profiles, manifest Workspace Type allowlist, API Install/Enable guard, legacy untyped fail-closed, disposable Control DB integration PASS; Profile ID/Version persistence remains P0.3)
+- [x] P0.3 Workspace Registry เก็บ Type, Profile Version และ Lifecycle Metadata — DONE (nullable profile ID/version + provisioning lifecycle fields, type/profile validation, persisted-profile compatibility, disposable migration rehearsal PASS; persistent Control DB migration/backfill not applied)
+- [x] P0.4 Workspace Selector แสดงประเภทและ Landing Page ตาม Workspace Type — DONE (persisted Profile/lifecycle display, legacy NULL fail-closed, POS/ONLINE landing separation, authenticated workspace switching, Playwright selector + POS shell regression 8/8 PASS; no persistent DB changes)
+- [x] P0.5 API Guard ตรวจ Workspace Type และ Module Capability — DONE (route-scoped Membership, ACTIVE status, Type/Profile compatibility, enabled Module capability, POS business controllers guarded, unit/wiring 13/13 PASS, disposable integration PASS; no persistent DB changes)
+- [x] P0.6 แยก Navigation/Default Roles/Permission Catalog ตาม Type — DONE (typed Core/Commerce Permission Catalog, POS/ONLINE role matrix, GET Roles read-only, cross-type permission/role guards, server-composed navigation, disposable Control DB integration PASS, Playwright 10/10 PASS; no persistent DB changes)
+- [ ] P0.7 ทดสอบ Cross-Workspace IDOR, Tenant Routing, Cache และ Media Access — IN PROGRESS (route-scoped RBAC, Tenant client identity/single-flight and two-Tenant integration PASS; media service Workspace lookup isolation; media/staging traversal + symlink hardening and private no-store PASS; Image Import batch Tenant routing/uploader ownership regression PASS; authenticated HTTP isolation harness verify-workspace-media-image-import-http-isolation.cjs added but NOT RUN/NOT VERIFIED; full HTTP IDOR matrix, DB failure matrix, route inventory and external CDN/proxy policy remain open)
+- [ ] P0.8 สร้าง Workspace ใหม่แบบ POS-only และ ONLINE-only บน Disposable DB เพื่อทดสอบ Provisioning
+- [ ] P0.9 กำหนด Module Migration Order, Upgrade และ Failure Recovery
+- [ ] P0.10 ปรับ README/Architecture Docs ให้ตรงกับ Runtime จริง
+
+**Acceptance Gate:** สร้าง POS และ Online Workspace บน Disposable DB แล้วพิสูจน์ได้ว่าแต่ละตัวมี Database, Module Profile, RBAC และ API Scope แยกจากกัน
+
+### Track 1 — SyncUp POS Product (P1)
+
+**เป้าหมาย:** ทำ POS ให้พร้อมใช้งานจริงโดยไม่พึ่ง Online Modules
+
+- [ ] POS.1 ยืนยัน POS Provisioning Profile และ Tenant Schema
+- [ ] POS.2 Store/Branch/Warehouse/Register Configuration
+- [ ] POS.3 Product/Variant/Barcode/UOM และ Store Assortment
+- [ ] POS.4 POS Price/Promotion/Tax Configuration
+- [ ] POS.5 Product Images ใน POS Workspace และ Storage Isolation
+- [ ] POS.6 Inventory Opening Stock/Receiving/Adjustment/Transfer/Stocktake
+- [ ] POS.7 Costing/WAC และ Stock Availability
+- [ ] POS.8 POS Catalog Search และ Barcode Scanner Workflow
+- [ ] POS.9 Cart/Discount/Tax/Checkout
+- [ ] POS.10 Sale Posting/Idempotency/Payment Ledger
+- [ ] POS.11 Cashier Register/Shift/Open Float/Cash Movement
+- [ ] POS.12 Receipt/Print/Reprint และ Hardware Verification
+- [ ] POS.13 Return/Void/Refund และ Approval
+- [ ] POS.14 Shift Close/Cash Reconciliation
+- [ ] POS.15 Sales/Inventory/Profit Reports
+- [ ] POS.16 RBAC, Security, Backup/Restore และ Full E2E
+- [ ] POS.17 Production Readiness Review และอนุมัติเปิดใช้ POS Workspace
+
+**Acceptance Gate:** ทำธุรกรรมจำลองครบตั้งแต่เปิดกะจนปิดกะ ตรวจเงิน/สต๊อก/ภาษี/Receipt ได้ และผ่าน Backup/Restore + Security + E2E
+
+### Track 2 — SyncUp Online Product (P2)
+
+**เป้าหมาย:** สร้างระบบร้านค้าออนไลน์ใน Workspace ใหม่ โดยไม่มี Dependency กับ POS Workspace
+
+- [ ] ONL.1 สร้าง Online Workspace จาก Online Provisioning Profile และ Tenant DB ใหม่
+- [ ] ONL.2 Online Store Identity/Domain/Theme/Publish Lifecycle
+- [ ] ONL.3 Product/Variant/Category และ Online Catalog
+- [ ] ONL.4 Media Library/Gallery/ZIP Import/SEO
+- [ ] ONL.5 Online Pricing/Promotion/Tax/Availability
+- [ ] ONL.6 Public Storefront/Search/Filter/Product Detail
+- [ ] ONL.7 Guest Cart และ Session Management
+- [ ] ONL.8 Checkout/Address/Shipping Options
+- [ ] ONL.9 Online Order Creation และ Reservation Policy
+- [ ] ONL.10 Payment Gateway Adapter/Payment Intent/Webhook
+- [ ] ONL.11 Order Management/Cancel/Return/Refund
+- [ ] ONL.12 Picking/Packing/Shipping/Tracking
+- [ ] ONL.13 Customer Notification/Order Tracking
+- [ ] ONL.14 Online Reports/Conversion/Payment/Shipping
+- [ ] ONL.15 Privacy/Security/Performance/Backup/Restore/E2E
+- [ ] ONL.16 Production Readiness Review และอนุมัติเปิดใช้ Online Workspace
+
+**Acceptance Gate:** ลูกค้าทดลองเข้าหน้า Public Store → เลือกสินค้า → Checkout → ชำระผ่าน Gateway Sandbox → Fulfillment → Tracking ได้ โดยไม่เข้าถึง POS Tenant หรือข้อมูลภายใน
+
+### Track 3 — Explicit Workspace Data Transfer (P3 / Optional)
+
+- [ ] กำหนด Use Cases ที่ต้องส่งข้อมูลระหว่าง POS และ Online
+- [ ] ออกแบบ Export/Import Format และ External ID Mapping
+- [ ] รองรับ Preview, Duplicate Detection, Validation และ Approval
+- [ ] Import แบบ Idempotent พร้อม Row-level Result และ Audit
+- [ ] กำหนด Data Ownership และ Conflict Policy
+- [ ] ทดสอบการส่งข้อมูลโดยไม่เปิด Cross-Database Query
+
+เริ่มจาก Catalog Export/Import แบบผู้ใช้สั่งงานเท่านั้น ยังไม่ทำ Live Sync
+
+### Track 4 — Optional Integration (P4 / Future)
+
+พิจารณาเมื่อ POS และ Online แยกอิสระและผ่าน Production Readiness แล้วเท่านั้น:
+- Outbox/Inbox Event Integration
+- Selected Stock Availability Feed
+- Order/Customer Reference Integration
+- Consolidated Analytics Projection
+
+ทุก Integration ต้อง Opt-in, มี Workspace Pair, Contract, Permission, Audit, Retry และ Kill Switch
+
+---
+
+## 11. แผนแยกจากระบบเดิม (Legacy Separation & Migration)
+
+### 11.1 สถานะระบบเดิมที่ทราบ
+
+- Platform ปัจจุบันมี Control Database และ Tenant Database แยกกันแล้ว
+- Control Schema มี User, Workspace, WorkspaceDatabase, Membership, RBAC และ ModuleInstallation
+- Control Schema ปัจจุบันยังไม่มี Workspace Type/Provisioning Profile ตาม Target Architecture นี้
+- Tenant Schema ปัจจุบันมี Commerce/Store/Product/Media/Inventory/Sales หลาย Domain อยู่ใน Schema เดียว
+- มี POS implementation และข้อมูลทดสอบ/ข้อมูลตั้งต้นใน Workspace ชื่อ `pos-local`
+- มี Sales Orders/Returns/Payments และ Product Media Upload implementation ใน Repository
+- Migration สำหรับ Product Media เป็น Candidate ที่ยังไม่ได้ Apply กับ Tenant DB
+- การมี Workspace Database แยกอยู่แล้วไม่ได้แปลว่า POS กับ Online แยกเป็น Workspace Type และ Module Profile แล้ว
+
+### 11.2 Target Mapping
+
+| ระบบ/ข้อมูลเดิม | แนวทาง |
+|---|---|
+| Control DB | คงเป็น Platform Control Plane และเพิ่ม Type/Profile ผ่าน Migration ที่ออกแบบ |
+| pos-local | ใช้เป็น POS Candidate ต่อไป; ห้ามเปลี่ยนเป็น Online |
+| Tenant Schema เดิม | ตรวจ Module Dependency และแยก POS/Online Provisioning Baseline |
+| POS Code | จัดเป็น POS Modules และจำกัด Workspace Type |
+| Online Code ที่มี/พัฒนาใหม่ | จัดเป็น Online Modules และ Online Tenant ใหม่ |
+| Product/Media Data | ไม่ Copy ข้าม Workspace อัตโนมัติ |
+| Orders/Payments/Inventory | คงอยู่ใน Workspace ต้นทาง; ไม่ย้ายหรือรวมโดยไม่มีแผนเฉพาะ |
+
+### 11.3 Migration Strategy
+
+1. Inventory ตาราง, API, Module และ Permission ที่มีอยู่จริง
+2. ทำ Dependency Map ระหว่าง Domain และ Migration
+3. แยก Core Tenant Baseline ออกจาก POS/Online Module Schema
+4. สร้าง Disposable POS Database และ Online Database ใหม่
+5. Rehearse Provisioning/Migrations/Module Install ทั้งสองแบบ
+6. ทดสอบ Runtime Role และ Cross-Tenant Denial
+7. วางแผน Cutover สำหรับ Workspace เดิมแยกเป็นราย Workspace
+8. สำรองข้อมูลและกำหนด Rollback/Forward Recovery
+9. ขออนุมัติ Workspace เป้าหมายและ Migration แต่ละครั้งก่อน Apply
+
+**ข้อห้าม:** ห้าม Drop ตารางเดิม, ห้าม Split Tenant Database จริงโดยอัตโนมัติ, ห้ามเปลี่ยน Type ของ Workspace เดิม, ห้าม Copy/Move Business Data โดยไม่มี Mapping/Preview/Approval
+
+---
+
+## 12. Security & Quality Gates
+
+ทุก Workspace ต้องผ่านรายการต่อไปนี้ก่อน Production:
+
+### Isolation
+- [ ] Cross-Workspace API Access ถูกปฏิเสธ
+- [ ] Tenant Database Routing มาจาก Trusted Registry
+- [ ] Runtime DB Role เข้า DB อื่นไม่ได้
+- [ ] Cache/Queue/Object Storage แยก Workspace
+- [ ] Media URL และ Download ตรวจ Permission/Publish State
+- [ ] Logs และ Audit มี Workspace Context
+
+### Business Integrity
+- [ ] Money ใช้ Decimal/NUMERIC ไม่ใช้ Floating Point
+- [ ] Stock/Payment/Refund ใช้ Transaction และ Idempotency
+- [ ] Document Sequence ไม่ชนกันข้าม Workspace
+- [ ] Audit Log ครบและแก้ย้อนหลังไม่ได้ตามนโยบาย
+- [ ] API ตรวจราคา/ภาษี/สิทธิ์/Availability ฝั่ง Server
+
+### Operational Readiness
+- [ ] Encrypted Backup และ Off-host Copy
+- [ ] Restore Rehearsal
+- [ ] Migration Rehearsal
+- [ ] Runtime Privilege Audit
+- [ ] Monitoring/Alert/Log Redaction
+- [ ] Incident และ Recovery Runbook
+- [ ] E2E ตาม Role และ Workflow
+- [ ] Owner Acceptance Sign-off
+
+---
+
+## 13. Definition of Done
+
+งานหนึ่ง Milestone ถือว่าเสร็จเมื่อ:
+1. ขอบเขต Workspace และ Module ชัดเจน
+2. API และ UI ทำงานตาม Permission
+3. ไม่มี Cross-Workspace Data Leakage
+4. Migration มี Candidate, Review และ Rehearsal
+5. Unit/Integration/E2E ผ่านตามขอบเขต
+6. Audit/Idempotency/Failure Handling ครบตามความเสี่ยง
+7. Documentation และ Operational Runbook อัปเดต
+8. ไม่มีการอ้างว่า Production-ready หากยังขาดข้อมูลจริง, Backup, Security หรือ Approval
+
+การ Build ผ่านอย่างเดียวไม่ถือว่า Milestone ผ่าน Production Acceptance
+
+---
+
+## 14. ลำดับงานถัดไปที่แนะนำ
+
+**เริ่มจาก Track 0 — Platform Separation Foundation**
+
+ลำดับย่อย:
+1. ตรวจ Workspace Registry, Control Schema และ Provisioning Flow ปัจจุบัน
+2. ออกแบบ Control DB Migration เพิ่ม `workspace_type` และ `provisioning_profile` แบบ Backward-compatible
+3. ออกแบบ POS/ONLINE Module Compatibility และ Provisioning Manifest
+4. สร้าง Disposable Database Templates แยก POS/ONLINE
+5. ทดสอบสร้าง Workspace ใหม่ทั้งสองประเภทและพิสูจน์ Isolation
+6. จึงเริ่ม POS Hardening บน `pos-local` และสร้าง Online Workspace ใหม่ในขั้นตอนที่แยกอนุมัติ
+
+**ห้ามเริ่มด้วยการย้ายข้อมูลหรือแก้ Tenant Database จริงก่อนผ่าน Disposable Rehearsal**
+
+---
+
+## 15. Current Project Status — Baseline ณ 2026-11-13
+
+สถานะนี้เป็น Snapshot จากงานที่มีอยู่ ไม่ใช่การรับรอง Production:
+
+| Area | สถานะปัจจุบัน | หมายเหตุ |
+|---|---|---|
+| Platform Identity / Workspace | มี Implementation | Workspace Type and persisted Profile ID/Version + provisioning lifecycle metadata implemented (P0.1–P0.3); persistent Control DB migration remains pending approval |
+| Tenant DB per Workspace | มี Implementation | Type-aware Profile ID/Version persisted for newly created Workspaces (P0.3); automatic module installation and type-specific Tenant schema baselines remain future milestones |
+| POS Inventory | มี Implementation บางส่วน | Inventory workflows และ UI มี แต่ต้องตรวจแยก Module/Profile |
+| POS Sales | มี Implementation บางส่วน | Orders/Returns/Payments มี Migration ใน pos-local แล้ว |
+| POS UX | มี Implementation บางส่วน | POS Shell/Catalog/Cart/Checkout/Receipt มี แต่ Production Gates ยังไม่ครบ |
+| Product Media | Code Implemented | Migration Candidate ยังไม่ Apply; Storage ต้องใช้ Durable Shared Volume และทดสอบจริง |
+| Online Workspace Type | Registry + persisted profile/lifecycle implemented (P0.1–P0.3 DONE) | Online profile intentionally has no eligible modules yet; dedicated Online modules/provisioning and persistent Control DB migration remain future gates |
+| Online Storefront/Checkout | ยังไม่ผ่านการยืนยันเป็นผลิตภัณฑ์แยก | ห้ามถือว่า POS/Commerce code ปัจจุบันเป็น Online Product พร้อมใช้ |
+| Cross-Workspace Security | มี service/DB/filesystem isolation tests | Authenticated HTTP IDOR matrix และ deployment edge-cache acceptance ยังไม่ผ่าน; P0.7 IN PROGRESS |
+| Cross-Workspace Integration | ยังไม่มีและไม่ใช่ Default | เป็น Optional Future Track |
+| Production Readiness | ยังไม่ผ่าน | Backup encryption/off-host, ข้อมูลจริง, hardware/payment และ acceptance ยังเป็น Gate |
+
+### Workspace ที่มีอยู่ในบริบทของโครงการ
+
+- `pos-local` — Candidate สำหรับ POS; ไม่ใช่ Online Workspace
+- `e2e-commerce-20261106` — Workspace สำหรับ E2E/ทดสอบ; ห้ามนำไปใช้เป็น Production Online โดยอนุมาน
+- Workspace ใหม่สำหรับ Online Production ต้องสร้างใหม่หลัง Track 0 ผ่านและได้รับอนุมัติ
+
+---
+
+## 16. Decision Log
+
+| วันที่ | การตัดสินใจ | ผล |
+|---|---|---|
+| 2026-11-13 | รื้อ Master Plan ใหม่และแยก POS/Online เป็นคนละ Workspace | ใช้เป็น Architecture Direction ล่าสุด |
+| 2026-11-13 | แต่ละ Workspace ต้องมี Tenant DB และ Business Data ของตนเอง | ห้าม Shared Business Tables/Implicit Sync |
+| 2026-11-13 | Shared ได้เฉพาะ Platform Identity และ Software Components | Shared Code ไม่เท่ากับ Shared Data |
+| 2026-11-13 | ผู้ใช้คนเดียวเป็นสมาชิกหลาย Workspace ได้ | Membership/RBAC แยกต่อ Workspace |
+| 2026-11-13 | `pos-local` คงเป็น POS Candidate | ห้าม Convert เป็น Online |
+| 2026-11-13 | Online ต้องเป็น Workspace และ Tenant DB ใหม่ | ไม่ Reuse POS Tenant |
+| 2026-11-13 | Cross-Workspace Integration เป็น Optional/Opt-in | Default = ไม่มีการ Sync |
+
+---
+
+## 17. Change Control
+
+- การแก้ Master Plan ไม่ได้อนุญาตให้เปลี่ยนระบบจริง
+- Control DB Migration ต้องระบุ Target Environment, Backup, Rehearsal และ Approval
+- Tenant Migration ต้องระบุ Workspace ID, Database และ Migration Version
+- Data Import/Export ต้องมี Preview, Mapping, Approval และ Audit
+- Production Activation ต้องมี Readiness Report และ Owner Sign-off
+- ห้าม Commit, Push หรือ Deploy เว้นแต่ได้รับคำสั่งอย่างชัดเจน
+- ต้องรักษา Uncommitted Changes ที่มีอยู่เดิม และห้าม Reset/Clean เพื่อให้ Working Tree สะอาด
+
+---
+
+## 18. Plan Revision History
+
+- **v2.9 — 2026-11-13:** อัปเดต P0.7 หลังเพิ่ม Workspace-scoped media/staging filesystem helpers, symlink/path hardening, media ID Tenant lookup isolation และ Image Import Batch Tenant/uploader ownership regression; focused tests ผ่านตามรายงาน แต่ authenticated HTTP harness ยังไม่ได้ยืนยันผล; P0.7 ยังคง IN PROGRESS
+- **v2.8 — 2026-11-13:** ขยาย P0.7 ด้วย route-scoped RBAC, Tenant Prisma client identity binding, membership recheck, stale-client eviction, single-flight initialization และ two-Tenant disposable DB integration; ยังเปิด HTTP IDOR และ edge-cache acceptance
+- **v2.7 — 2026-11-13:** ปิด P0.6 หลังแยก Permission Catalog, Navigation และ Default Role Matrix ตาม POS/ONLINE; GET Roles เป็น read-only, cross-type permission/role guards และ disposable Control DB integration + Playwright 10/10 ผ่าน
+- **v2.6 — 2026-11-13:** ปิด P0.5 หลังเพิ่ม Workspace Module Capability Guard บังคับ Membership, ACTIVE, Workspace Type, persisted Profile ID/Version และ ModuleInstallation ENABLED สำหรับ POS Commerce API; unit/wiring 13/13 และ disposable integration ผ่าน; ไม่มี persistent DB changes
+- **v2.5 — 2026-11-13:** ปิด P0.4 หลังแยก Workspace Selector และ Landing ตาม POS/ONLINE พร้อม Profile/lifecycle display และ Playwright selector + POS shell regression 8/8 ผ่าน
+- **v2.4 — 2026-11-13:** ปิด P0.3 หลังเพิ่ม Workspace Registry Profile ID/Version, provisioning lifecycle metadata, persisted-profile validation และ disposable PostgreSQL migration rehearsal PASS; ไม่มี persistent Control/Tenant DB migration หรือ legacy backfill
+- **v2.3 — 2026-11-13:** ปิด P0.2 หลังเพิ่ม POS/ONLINE Provisioning Profiles, Manifest Type compatibility, API Install/Enable guards และ disposable Control DB integration PASS; Profile ID/Version persistence คงไว้ใน P0.3
+- **v2.2 — 2026-11-13:** ปิด P0.1 หลัง implementation, automated verification และ disposable PostgreSQL migration rehearsal ผ่าน; ไม่ Apply Migration กับ persistent Control DB และไม่ backfill ประเภท Workspace เดิม
+- **v2.1 — 2026-11-13:** เพิ่ม Development Methodology & Milestone Governance และเริ่ม Track 0 / P0.1 Workspace Type & Registry โดยเพิ่ม Workspace Type POS/ONLINE ใน Control Plane แบบ additive; ยังไม่ Apply Migration และไม่จัดประเภท Workspace เดิมโดยคาดเดา
+- **v2.0 — 2026-11-13:** เขียน Master Plan ใหม่โดยยกเลิกแนวคิด Omnichannel Tenant เดียว แยก SyncUp POS และ SyncUp Online เป็นคนละ Workspace, Tenant Database, Module Profile, RBAC และ Business Lifecycle; เพิ่ม Platform Separation Foundation, Legacy Separation และ Roadmap ใหม่
+- **v1.x:** เก็บเอกสารแผนเดิมและประวัติการทำงานไว้ที่ `docs/architecture/archive/plan-legacy-2026-11-13.md` เพื่ออ้างอิง ไม่ใช้เป็น Roadmap หลักอีกต่อไป
+
+---
+
+## 19. Development Methodology & Milestone Governance
+
+หัวข้อนี้เป็นมาตรฐานบังคับสำหรับทุก Track และ Milestone เพื่อให้ทีมยึดเป้าหมายเดียวกัน ลดงานหลุด Scope และป้องกันการข้ามขั้นตอนที่มีความเสี่ยง
+
+### 19.1 Development Approach
+
+ใช้แนวทางผสม:
+- **Milestone-based Development:** แบ่งงานเป็น Milestone ที่มีขอบเขตและผลส่งมอบชัดเจน
+- **Vertical Slice:** พัฒนาให้ครบเส้นทางที่จำเป็นตั้งแต่ Database/Backend/Business Logic ถึง Frontend ใน Milestone เดียว ไม่ทำ Backend ทั้งหมดก่อนแล้วค่อยทำ UI
+- **Acceptance Gate:** ทุก Milestone ต้องผ่านเกณฑ์ตรวจรับก่อนปิดงาน
+- **Incremental & Backward-compatible Change:** เปลี่ยนทีละส่วน รักษาความเข้ากันได้และหลีกเลี่ยงการทำลายข้อมูลเดิม
+- **Security-by-design:** ตรวจ Workspace Boundary, Authorization, Tenant Routing และ Data Privacy ตั้งแต่เริ่มออกแบบ
+
+การแบ่ง Milestone ต้องสอดคล้องกับ Track 0–4 ในหัวข้อ 10 ห้ามสร้าง Roadmap ย่อยที่ขัดแย้งกับ Master Plan โดยไม่มี Decision Log
+
+### 19.2 Milestone Levels
+
+ระดับต่อไปนี้เป็นมุมมองจัดประเภทงาน ไม่ใช่ลำดับบังคับว่าทุก Milestone ต้องทำ 4 รอบแยกกัน:
+
+| Level | จุดเน้น | ผลลัพธ์ |
+|---|---|---|
+| M0 — Foundation | Architecture, Infrastructure, Security, Contracts | รากฐานและขอบเขตระบบ |
+| M1 — Core | Schema, API, Domain Logic, Authorization | ความสามารถหลัก |
+| M2 — Experience | UX/UI, Workflow, Accessibility, Error/Empty States | ผู้ใช้ทำงานได้ครบ Workflow |
+| M3 — Quality | Tests, Security, Performance, Operations, Documentation | หลักฐานพร้อมตรวจรับ |
+
+Milestone ขนาดเล็กอาจรวมหลาย Level ได้ หาก Scope และ Acceptance Criteria ยังชัดเจน
+
+### 19.3 Required Milestone Brief
+
+ก่อนเริ่ม Implementation ทุก Milestone ต้องมี Brief:
+1. Milestone ID / Name / Track
+2. **Objective:** ผลลัพธ์และเหตุผลทางธุรกิจ
+3. **Scope / Out of Scope:** สิ่งที่รวมและไม่รวม
+4. **Dependencies:** Milestone, Module, API และ Migration ที่ต้องพร้อม
+5. **Architecture & Technical Design:** Data Model, API Contract, UI Flow, Permission และ Workspace Boundary
+6. **Implementation Tasks:** งานย่อยและ Module/ไฟล์ที่เกี่ยวข้อง
+7. **Test Plan:** Unit, Integration, E2E, Regression, Security และ Failure Cases ตามความเสี่ยง
+8. **Acceptance Criteria:** เงื่อนไขตรวจสอบได้และหลักฐานที่ต้องแนบ
+9. **Risk / Rollback:** ความเสี่ยงและ Recovery/Rollback หรือ Forward-fix
+10. **Documentation:** เอกสารและ Runbook ที่ต้องอัปเดต
+11. **Approval Boundary:** งานที่ทำได้ใน Local/Disposable และงานที่ต้องขออนุมัติก่อนแตะ Environment จริง
+
+ห้ามเริ่ม Milestone ที่กระทบ Database, Data Migration, Credential, Permission หรือ Production โดยไม่มี Target Environment และ Approval Boundary ชัดเจน
+
+### 19.4 Standard Execution Workflow
+
+1. **Inspect:** ตรวจ Working Tree, Plan, Code, Schema, Tests และสถานะ Milestone ก่อนหน้า
+2. **Plan:** จัดทำ Brief, Task Breakdown, Dependencies และ Acceptance Criteria
+3. **Design:** ตรวจ Architecture, Data Ownership, Workspace Type, Tenant Routing, RBAC และ Migration Impact
+4. **Implement:** พัฒนาเป็น Vertical Slice ตาม Scope และรักษา Uncommitted Changes
+5. **Verify:** รัน Tests ที่สัมพันธ์กับการเปลี่ยนแปลง พร้อม Build/Typecheck/Lint ตามที่ Project รองรับ
+6. **Review:** ตรวจ Diff, Security, Regression, Logs และผลข้างเคียง
+7. **Document:** อัปเดต Plan, Decision Log, Technical Docs และ Runbook
+8. **Accept:** เทียบผลจริงกับ Criteria และแยก Passed/Failed/Blocked/Not Run
+9. **Report:** สรุปผล หลักฐาน Known Issues และความคืบหน้า
+10. **Next:** เสนอ Milestone ถัดไปที่ Dependencies พร้อมแล้ว โดยไม่ข้าม Gate
+
+### 19.5 Acceptance Gate — Definition of Done
+
+Milestone จะปิดเป็น **DONE** ได้เมื่อ:
+- Scope เสร็จครบ และไม่มีการแอบเพิ่ม Out of Scope
+- Acceptance Criteria ทุกข้อมีหลักฐานตรวจสอบ
+- Unit/Integration/E2E ผ่านตาม Test Plan; กรณีทดสอบไม่ได้ต้องระบุ BLOCKED/NOT RUN ห้ามนับเป็น PASS
+- Regression ของ Module และ Workspace ที่ได้รับผลกระทบผ่าน
+- Authorization, Workspace Isolation และ Tenant Routing ผ่านการตรวจตามความเสี่ยง
+- Migration ผ่าน Review และ Rehearsal บน Disposable Environment
+- Error Handling, Idempotency, Audit และ Recovery ครบตามขอบเขต
+- Documentation/Runbook/Plan อัปเดต
+- ไม่มี Critical/High issue ที่ยังไม่จัดการหรือยอมรับความเสี่ยงอย่างเป็นทางการ
+
+สถานะที่อนุญาต:
+- **DONE:** ผ่าน Acceptance Criteria ทั้งหมด
+- **IN PROGRESS:** กำลังดำเนินการ
+- **BLOCKED:** มี Dependency/สิทธิ์/Environment ขวาง
+- **FAILED:** ทดสอบหรือ Acceptance ไม่ผ่าน
+- **DEFERRED:** เลื่อนพร้อมเหตุผลและผลกระทบ
+- **NOT STARTED:** ยังไม่เริ่ม
+
+ห้ามใช้ DONE หรือ 100% หากมี Criteria ที่ยังไม่ผ่านหรือยังไม่ได้ทดสอบ
+
+### 19.6 Progress Measurement & Reporting
+
+- แตก Milestone เป็น Tasks ที่ตรวจสอบได้ก่อนเริ่ม
+- คำนวณความคืบหน้าจาก Task ที่เสร็จและผ่าน Verification เทียบกับทั้งหมด (ใช้น้ำหนักได้เมื่อกำหนดล่วงหน้า)
+- BLOCKED, FAILED หรือ NOT RUN ไม่นับเป็นงานเสร็จ
+- รายงานแยก Platform, POS และ Online ห้ามรวมเป็นเปอร์เซ็นต์เดียวจนบดบังความเสี่ยง
+- แสดง Implementation, Tests, Security Review, Documentation และ Acceptance แยกกัน
+- ทุก Report ระบุช่วงเวลาหรือ Git/Working Tree Context และ Environment: Local, Disposable, Staging หรือ Production
+- ระบุ Test Command/Result และข้อจำกัด ห้ามรายงานจากการคาดเดา
+
+รูปแบบรายงาน:
+
+| Dimension | Status | Evidence / Notes |
+|---|---|---|
+| Scope / Implementation | DONE / IN PROGRESS / BLOCKED | งานที่เสร็จจริง |
+| Unit / Integration | PASS / FAIL / NOT RUN | คำสั่งและผล |
+| E2E / Regression | PASS / FAIL / NOT RUN | Workflow ที่ครอบคลุม |
+| Security / Isolation | PASS / FAIL / NOT RUN | ขอบเขตที่ตรวจ |
+| Migration / Operations | PASS / BLOCKED / N/A | Target และ Rehearsal |
+| Documentation | DONE / PENDING | ไฟล์ที่อัปเดต |
+| Acceptance | DONE / BLOCKED / FAILED | Criteria ที่ผ่าน/ไม่ผ่าน |
+| Overall Progress | 0–100% | คำนวณจาก Task ที่ตรวจรับแล้ว |
+
+### 19.7 Change & Approval Control
+
+ต้องขออนุมัติอย่างชัดเจนก่อน:
+- Apply Migration หรือแก้ Control/Tenant Database ที่ไม่ใช่ Disposable
+- สร้าง/ลบ/เปลี่ยน Workspace จริง หรือ Provision Tenant จริง
+- Import, Move, Delete หรือแก้ Business Data จริง
+- เปลี่ยน Role/Permission หรือ Runtime Credential ใน Environment จริง
+- Deploy, เปิด Public Access, เปิดรับเงินจริง หรือเปิด Production Feature
+- Commit, Push หรือเปลี่ยน Branch/Release หากไม่ได้สั่งไว้
+
+การอนุมัติหนึ่งครั้งใช้เฉพาะ Target, Action และ Scope ที่ระบุ ไม่ขยายไป Environment หรือการกระทำอื่นโดยปริยาย
+
+ระหว่างพัฒนา:
+- ห้าม Reset/Clean/Checkout ทับ Uncommitted Changes
+- ไม่แก้ไฟล์นอก Scope หากไม่จำเป็น; หากจำเป็นต้องบันทึกเหตุผล
+- ใช้ Disposable Database สำหรับ Migration Rehearsal และ Integration Tests ที่ต้องเขียนข้อมูล
+- ไม่ใช้ Production/Workspace จริงเป็น Test Fixture
+- ห้ามพิมพ์ Secret ลง Report, Log หรือ Commit
+
+### 19.8 Milestone Handoff
+
+เมื่อปิด Milestone ต้องส่งต่อ:
+1. สิ่งที่ทำเสร็จและยังไม่เสร็จ
+2. รายการไฟล์/Module/Schema/API ที่เปลี่ยน
+3. Test Evidence และ Test ที่ BLOCKED/NOT RUN
+4. Migration/Environment ที่แตะและสถานะ Apply
+5. Known Issues, Technical Debt และ Risk
+6. Dependencies และ Milestone ถัดไป
+7. Plan/Decision Log/Runbook ที่อัปเดต
+
+Milestone ถัดไปต้องเริ่มจาก Handoff ล่าสุด ไม่เริ่มจากการคาดเดาหรือสร้าง Scope ซ้ำซ้อน
+
+### 19.9 Source of Truth & Anti-Drift Rules
+
+- `plan.md` เป็น Master Roadmap และ Source of Truth สำหรับ Track, Milestone, Status และ Acceptance Gate
+- Milestone/Implementation Report เป็นหลักฐานประกอบ แต่ห้ามนิยาม Roadmap ขัดกับ `plan.md`
+- เมื่อ Scope, Dependency หรือ Architecture เปลี่ยน ต้องอัปเดต `plan.md` และ Decision Log ในงานเดียวกัน
+- งานที่พบระหว่างพัฒนาแต่นอก Scope ให้บันทึก Follow-up/Backlog ไม่แทรกเพิ่มโดยไม่ประเมินผลกระทบ
+- ก่อนเริ่มงานใหม่ ตรวจ Milestone Status, Git Working Tree, Known Blockers และ Handoff ล่าสุด
+- หาก Report ไม่ตรงกับ Code/Database/Test Result ให้ยึดหลักฐานจริงและแก้เอกสารให้ตรง
+
+### 19.10 Default Milestone Operating Agreement
+
+เมื่อผู้ใช้สั่ง "เริ่ม Milestone ถัดไป" หรือ "ทำตามแผนต่อ":
+1. ตรวจ Status และ Dependencies ของ Milestone ถัดไปจาก `plan.md`
+2. ตรวจ Code/Environment ที่เกี่ยวข้องก่อนแก้ไข
+3. เริ่มงานใน Scope ที่ทำได้โดยปลอดภัย
+4. หยุดและขออนุมัติเมื่อถึง Approval Boundary
+5. ทดสอบและอัปเดต `plan.md` ตามผลจริง
+6. รายงานสถานะและเสนอ Milestone ถัดไปเพียงหนึ่งรายการ
+
+หากไม่ชัดว่าคำสั่งหมายถึงการแก้ระบบจริงหรือวางแผน ให้ถามเฉพาะประเด็นจำเป็นก่อนการกระทำที่ย้อนกลับยาก

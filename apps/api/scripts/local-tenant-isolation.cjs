@@ -37,8 +37,8 @@ async function main() {
 
     const provisioner = new WorkspaceProvisioningService(db, new TenantMigrationRunner());
     const workspaceService = new WorkspacesService(db, provisioner);
-    const workspaceA = await workspaceService.create({ slug: "workspace-a-local", name: "Workspace A", ownerUserId: saved[0].id });
-    const workspaceB = await workspaceService.create({ slug: "workspace-b-local", name: "Workspace B", ownerUserId: saved[1].id });
+    const workspaceA = await workspaceService.create({ slug: "workspace-a-local", name: "Workspace A", type: "POS", ownerUserId: saved[0].id });
+    const workspaceB = await workspaceService.create({ slug: "workspace-b-local", name: "Workspace B", type: "ONLINE", ownerUserId: saved[1].id });
 
     const tenantA = await registry.forMembership(saved[0].id, workspaceA.workspaceId);
     const tenantB = await registry.forMembership(saved[1].id, workspaceB.workspaceId);

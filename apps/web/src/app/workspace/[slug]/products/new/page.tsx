@@ -7,7 +7,13 @@ type Workspace = { id: string; slug: string };
 type Unit = { code: string; name: string; symbol: string };
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...init, credentials: "same-origin", cache: "no-store", headers: { ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers } });
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  const response = await fetch(path, {
+    ...init,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { ...(init.body && !isFormData ? { "Content-Type": "application/json" } : {}), ...init.headers },
+  });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(Array.isArray(data.message) ? data.message.join(", ") : data.message || "เกิดข้อผิดพลาด");
   return data as T;
@@ -25,6 +31,9 @@ export default function NewProductPage() {
   const [title, setTitle] = useState("");
   const [barcode, setBarcode] = useState("");
   const [uomCode, setUomCode] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState("");
+  const [createdProductId, setCreatedProductId] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +52,28 @@ export default function NewProductPage() {
     })().catch((e) => { if (active) setError(e instanceof Error ? e.message : "โหลดหน่วยนับไม่สำเร็จ"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [slug]);
+  }, [slug, router]);
+
+  useEffect(() => {
+    if (!imageFile) { setImagePreview(""); return; }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
+
+  function selectImage(file?: File) {
+    if (!file) { setImageFile(null); return; }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setError("รองรับเฉพาะไฟล์ JPG, PNG และ WebP");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("ขนาดรูปภาพต้องไม่เกิน 5 MB");
+      return;
+    }
+    setError("");
+    setImageFile(file);
+  }
 
   async function createProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -56,6 +86,19 @@ export default function NewProductPage() {
           variant: { sku: sku.trim(), title: title.trim() || name.trim(), barcode: barcode.trim() || null, uomCode },
         }),
       });
+      if (imageFile) {
+        const form = new FormData();
+        form.append("file", imageFile);
+        form.append("isPrimary", "true");
+        form.append("altText", name.trim());
+        try {
+          await api(`/api/tenant/${workspaceId}/products/${created.id}/images`, { method: "POST", body: form });
+        } catch (uploadError) {
+          setCreatedProductId(created.id);
+          setError(`สร้างสินค้าเรียบร้อยแล้ว แต่บันทึกรูปภาพไม่สำเร็จ: ${uploadError instanceof Error ? uploadError.message : "กรุณาลองอีกครั้ง"}`);
+          return;
+        }
+      }
       router.push(`/workspace/${slug}/products/${created.id}`);
     } catch (e) { setError(e instanceof Error ? e.message : "สร้างสินค้าไม่สำเร็จ"); }
     finally { setBusy(false); }
@@ -70,12 +113,18 @@ export default function NewProductPage() {
       <section className="dashboard-content">
         <div className="dashboard-head"><div><div className="eyebrow">COMMERCE / NEW PRODUCT</div><h1>เพิ่มสินค้า</h1><p className="subtle">สร้างสินค้าและ Variant แรกในแคตตาล็อกกลาง</p></div></div>
         {error && <div className="error" role="alert">{error}</div>}
+        {createdProductId && <div className="panel"><p>สินค้าได้รับการสร้างแล้ว สามารถเปิดหน้าแก้ไขเพื่ออัปโหลดรูปภาพอีกครั้ง</p><button type="button" className="primary" onClick={() => router.push(`/workspace/${slug}/products/${createdProductId}`)}>เปิดหน้าสินค้า</button></div>}
         {loading ? <p className="subtle">กำลังโหลดหน่วยนับ...</p> : (
           <form className="panel" onSubmit={createProduct}>
             <div className="form-grid">
               <div className="field"><label htmlFor="product-name">ชื่อสินค้า</label><input id="product-name" required maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></div>
               <div className="field"><label htmlFor="product-status">สถานะ</label><select id="product-status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="DRAFT">ฉบับร่าง</option><option value="ACTIVE">พร้อมขาย</option></select></div>
               <div className="field field-wide"><label htmlFor="product-description">รายละเอียด</label><textarea id="product-description" rows={4} maxLength={10000} value={description} onChange={(event) => setDescription(event.target.value)} /></div>
+              <div className="field field-wide">
+                <label htmlFor="product-image">รูปภาพสินค้า (JPG, PNG, WebP ไม่เกิน 5 MB)</label>
+                <input id="product-image" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => selectImage(event.target.files?.[0])} />
+                {imagePreview && <div className="product-image-preview"><img src={imagePreview} alt="ตัวอย่างรูปสินค้า" /><div><strong>{imageFile?.name}</strong><button type="button" className="ghost" onClick={() => setImageFile(null)}>นำรูปออก</button></div></div>}
+              </div>
               <div className="field"><label htmlFor="variant-sku">SKU</label><input id="variant-sku" required maxLength={100} value={sku} onChange={(event) => setSku(event.target.value)} /></div>
               <div className="field"><label htmlFor="variant-title">ชื่อ Variant</label><input id="variant-title" maxLength={160} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="ถ้าเว้นว่าง จะใช้ชื่อสินค้า" /></div>
               <div className="field"><label htmlFor="variant-barcode">บาร์โค้ด</label><input id="variant-barcode" maxLength={128} value={barcode} onChange={(event) => setBarcode(event.target.value)} /></div>
@@ -84,7 +133,7 @@ export default function NewProductPage() {
             {!units.length && <p className="error">ยังไม่มีหน่วยนับที่ใช้งานได้</p>}
             <div className="modal-actions section-spaced">
               <button type="button" className="ghost" onClick={() => router.push(`/workspace/${slug}/products`)}>ยกเลิก</button>
-              <button className="primary" disabled={busy || !units.length}>{busy ? "กำลังบันทึก..." : "สร้างสินค้า"}</button>
+              <button className="primary" disabled={busy || !units.length || !!createdProductId}>{busy ? "กำลังบันทึก..." : "สร้างสินค้า"}</button>
             </div>
           </form>
         )}

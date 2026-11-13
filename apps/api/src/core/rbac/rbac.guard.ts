@@ -14,8 +14,14 @@ export class RbacGuard implements CanActivate {
     if (!permission) return true;
     const request = context.switchToHttp().getRequest();
     const userId = request.user?.userId;
-    const workspaceId = request.params?.workspaceId ?? request.headers?.["x-workspace-id"];
-    if (!userId || typeof workspaceId !== "string") throw new ForbiddenException("Workspace authorization context is required");
+    const workspaceId = request.params?.workspaceId;
+    const headerWorkspaceId = request.headers?.["x-workspace-id"];
+    if (!userId || typeof workspaceId !== "string" || !workspaceId.trim()) {
+      throw new ForbiddenException("Route-scoped Workspace authorization context is required");
+    }
+    if (headerWorkspaceId !== undefined && (typeof headerWorkspaceId !== "string" || headerWorkspaceId !== workspaceId)) {
+      throw new ForbiddenException("Workspace route and header context do not match");
+    }
     if (!(await this.rbac.hasPermission(userId, workspaceId, permission))) {
       throw new ForbiddenException("Missing workspace permission");
     }

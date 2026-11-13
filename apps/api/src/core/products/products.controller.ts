@@ -3,13 +3,16 @@ import type { Request } from "express";
 import { AuthGuard } from "../auth/auth.guard";
 import { RequirePermission } from "../rbac/rbac.decorator";
 import { RbacGuard } from "../rbac/rbac.guard";
+import { RequireModuleCapability } from "../modules/module-capability.decorator";
+import { WorkspaceModuleCapabilityGuard } from "../modules/workspace-module-capability.guard";
 import { CreateProductInput, ProductCommandService, UpdateProductInput } from "./product-command.service";
 import { ProductListQuery, ProductQueryService } from "./product-query.service";
 
 type AuthenticatedRequest = Request & { user: { userId: string } };
 
 @Controller("tenant")
-@UseGuards(AuthGuard, RbacGuard)
+@RequireModuleCapability("commerce")
+@UseGuards(AuthGuard, WorkspaceModuleCapabilityGuard, RbacGuard)
 export class ProductsController {
   constructor(
     private readonly products: ProductQueryService,
@@ -83,4 +86,15 @@ export class ProductsController {
   ) {
     return this.products.getProduct(request.user.userId, workspaceId, productId);
   }
+
+  @Get(":workspaceId/pos/catalog")
+  @RequirePermission("commerce.product.view")
+  posCatalog(
+    @Param("workspaceId") workspaceId: string,
+    @Query() query: { storeId?: string; branchId?: string; warehouseId?: string; search?: string },
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.products.listPosProducts(request.user.userId, workspaceId, query);
+  }
+
 }

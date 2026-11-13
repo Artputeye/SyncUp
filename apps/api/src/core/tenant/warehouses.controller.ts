@@ -3,13 +3,16 @@ import type { Request } from "express";
 import { AuthGuard } from "../auth/auth.guard";
 import { RequirePermission } from "../rbac/rbac.decorator";
 import { RbacGuard } from "../rbac/rbac.guard";
+import { RequireModuleCapability } from "../modules/module-capability.decorator";
+import { WorkspaceModuleCapabilityGuard } from "../modules/workspace-module-capability.guard";
 import { StoreLifecycleService } from "./store-lifecycle.service";
 import { WarehouseQueryService } from "./warehouse-query.service";
 
 type AuthenticatedRequest = Request & { user: { userId: string } };
 
 @Controller("tenant")
-@UseGuards(AuthGuard, RbacGuard)
+@RequireModuleCapability("commerce")
+@UseGuards(AuthGuard, WorkspaceModuleCapabilityGuard, RbacGuard)
 export class WarehousesController {
   constructor(
     private readonly warehouses: WarehouseQueryService,

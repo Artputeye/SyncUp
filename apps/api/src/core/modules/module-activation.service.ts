@@ -8,7 +8,7 @@ import {
 import { PrismaService } from "../../database/prisma.service";
 import { WorkspaceDatabaseRegistry } from "../../database/workspace-database.registry";
 import { RbacService } from "../rbac/rbac.service";
-import { ModuleManifest } from "./module-manifest";
+import { ModuleManifest, WorkspaceType } from "./module-manifest";
 import { ModuleRegistryService } from "./module-registry.service";
 
 const PLATFORM_VERSION = process.env.SYNCUP_PLATFORM_VERSION ?? "0.1.0";
@@ -37,10 +37,10 @@ export class ModuleActivationService {
     private readonly tenantDatabases: WorkspaceDatabaseRegistry,
   ) {}
 
-  private async assertManage(userId: string, workspaceId: string): Promise<void> {
+  private async assertManage(userId: string, workspaceId: string) {
     const workspace = await this.db.workspace.findUnique({
       where: { id: workspaceId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, type: true, provisioningProfileId: true, provisioningProfileVersion: true },
     });
     if (!workspace) throw new NotFoundException("ไม่พบ Workspace");
     if (workspace.status !== "ACTIVE") {
@@ -49,11 +49,13 @@ export class ModuleActivationService {
     if (!(await this.rbac.hasPermission(userId, workspaceId, "modules.manage"))) {
       throw new ForbiddenException("ต้องมีสิทธิ์ modules.manage");
     }
+    return workspace;
   }
 
   private async compatibility(
     userId: string,
     workspaceId: string,
+    workspace: { type: WorkspaceType | null; provisioningProfileId: string | null; provisioningProfileVersion: string | null },
     manifest: ModuleManifest,
   ) {
     const issues: string[] = [];
@@ -65,6 +67,18 @@ export class ModuleActivationService {
     } else {
       if (minimum < 0) issues.push(`ต้องใช้ Platform อย่างน้อย ${manifest.compatibility.minPlatformVersion}`);
       if (maximum >= 0) issues.push(`Platform ต้องต่ำกว่า ${manifest.compatibility.maxPlatformVersionExclusive}`);
+    }
+
+    const profile = this.registry.resolvePersistedProfile(workspace.type, workspace.provisioningProfileId, workspace.provisioningProfileVersion);
+    if (!profile) {
+      issues.push("Workspace ไม่มี Provisioning Profile ที่บันทึกไว้ หรือ Profile ไม่ตรงกับ Type/Version ปัจจุบัน");
+    } else {
+      if (!profile.allowedModuleIds.includes(manifest.id)) {
+        issues.push("Provisioning Profile " + profile.id + "@" + profile.version + " ไม่อนุญาตโมดูล " + manifest.id);
+      }
+      if (!manifest.workspaceTypes.includes(workspace.type!)) {
+        issues.push("โมดูล " + manifest.id + " ไม่รองรับ Workspace Type " + workspace.type);
+      }
     }
 
     const registeredPermissions = await this.db.permission.findMany({
@@ -106,6 +120,9 @@ export class ModuleActivationService {
     return {
       compatible: issues.length === 0,
       platformVersion: PLATFORM_VERSION,
+      workspaceType: workspace.type,
+      profileId: profile?.id ?? null,
+      profileVersion: profile?.version ?? null,
       module: { id: manifest.id, version: manifest.version },
       requiredTenantMigrations: manifest.requiredTenantMigrations,
       appliedTenantMigrations: tenantMigrationVersions,
@@ -113,8 +130,17 @@ export class ModuleActivationService {
     };
   }
 
+  async getProvisioningProfile(userId: string, workspaceId: string) {
+    const workspace = await this.assertManage(userId, workspaceId);
+    const profile = this.registry.resolvePersistedProfile(workspace.type, workspace.provisioningProfileId, workspace.provisioningProfileVersion);
+    if (!profile) {
+      throw new ConflictException("Workspace ไม่มี Provisioning Profile ที่ถูกต้องหรือ Profile ไม่ตรงกับ Type/Version");
+    }
+    return profile;
+  }
+
   async list(userId: string, workspaceId: string) {
-    await this.assertManage(userId, workspaceId);
+    const workspace = await this.assertManage(userId, workspaceId);
     const installations = await this.db.moduleInstallation.findMany({
       where: { workspaceId },
       orderBy: { moduleId: "asc" },
@@ -124,14 +150,14 @@ export class ModuleActivationService {
       this.registry.list().map(async (manifest) => ({
         manifest,
         installation: byId.get(manifest.id) ?? null,
-        compatibility: await this.compatibility(userId, workspaceId, manifest),
+        compatibility: await this.compatibility(userId, workspaceId, workspace, manifest),
       })),
     );
   }
 
   async checkCompatibility(userId: string, workspaceId: string, moduleId: string) {
-    await this.assertManage(userId, workspaceId);
-    return this.compatibility(userId, workspaceId, this.registry.get(moduleId));
+    const workspace = await this.assertManage(userId, workspaceId);
+    return this.compatibility(userId, workspaceId, workspace, this.registry.get(moduleId));
   }
 
   async auditLog(userId: string, workspaceId: string) {
@@ -144,9 +170,9 @@ export class ModuleActivationService {
   }
 
   async install(userId: string, workspaceId: string, moduleId: string) {
-    await this.assertManage(userId, workspaceId);
+    const workspace = await this.assertManage(userId, workspaceId);
     const manifest = this.registry.get(moduleId);
-    const check = await this.compatibility(userId, workspaceId, manifest);
+    const check = await this.compatibility(userId, workspaceId, workspace, manifest);
     if (!check.compatible) {
       throw new BadRequestException({ message: "Module compatibility check failed", issues: check.issues });
     }
@@ -187,7 +213,7 @@ export class ModuleActivationService {
   }
 
   async enable(userId: string, workspaceId: string, moduleId: string) {
-    await this.assertManage(userId, workspaceId);
+    const workspace = await this.assertManage(userId, workspaceId);
     const manifest = this.registry.get(moduleId);
     const installation = await this.db.moduleInstallation.findUnique({
       where: { workspaceId_moduleId: { workspaceId, moduleId } },
@@ -198,7 +224,7 @@ export class ModuleActivationService {
     }
     if (installation.status === "ENABLED" && installation.enabled) return installation;
 
-    const check = await this.compatibility(userId, workspaceId, manifest);
+    const check = await this.compatibility(userId, workspaceId, workspace, manifest);
     if (!check.compatible) {
       throw new BadRequestException({ message: "Module compatibility check failed", issues: check.issues });
     }

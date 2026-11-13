@@ -26,6 +26,8 @@ const migrations = [
   "apps/api/prisma/migrations/202611060001_commerce_inventory_operation_permissions/migration.sql",
   "apps/api/prisma/migrations/202611060002_commerce_store_manager_grant/migration.sql",
   "apps/api/prisma/migrations/202611060003_module_registration_activation/migration.sql",
+  "apps/api/prisma/migrations/20261113000100_workspace_type_registry/migration.sql",
+  "apps/api/prisma/migrations/20261113000200_workspace_profile_lifecycle/migration.sql",
 ];
 const modulePermissions = [
   "commerce.store.view", "commerce.store.manage", "commerce.warehouse.view",
@@ -56,6 +58,16 @@ function databaseUrl(database) {
 async function connect(database) {
   const client = new Client({ connectionString: databaseUrl(database), connectionTimeoutMillis: 5000 });
   await client.connect(); return client;
+}
+function expectBadRequest(promise, label) {
+  return promise.then(() => { throw new Error(label + " unexpectedly succeeded"); }, (error) => {
+    assert(error.status === 400, label + " returned unexpected error: " + error.message);
+  });
+}
+function expectConflict(promise, label) {
+  return promise.then(() => { throw new Error(label + " unexpectedly succeeded"); }, (error) => {
+    assert(error.status === 409, label + " returned unexpected error: " + error.message);
+  });
 }
 function expectForbidden(promise, label) {
   return promise.then(() => { throw new Error(label + " unexpectedly succeeded"); }, (error) => {
@@ -90,7 +102,7 @@ async function main() {
     const deniedMembershipId = randomUUID();
 
     await source.query(
-      "INSERT INTO workspaces(id,slug,name,status,created_at,updated_at) VALUES ($1,'module-test','Module Test','ACTIVE',NOW(),NOW())",
+      "INSERT INTO workspaces(id,slug,name,type,provisioning_profile_id,provisioning_profile_version,status,created_at,updated_at) VALUES ($1,'module-test','Module Test','POS','pos-standard','1.0.0','ACTIVE',NOW(),NOW())",
       [workspaceId],
     );
     for (const [id,email] of [[ownerId,"owner@module-test.local"],[managerId,"manager@module-test.local"],[deniedId,"denied@module-test.local"]]) {
@@ -146,9 +158,38 @@ async function main() {
     const manifest = registry.get("commerce");
     assert(manifest.id === "commerce" && manifest.version === "0.1.0", "Commerce manifest identity/version mismatch");
 
+    const profile = await service.getProvisioningProfile(ownerId, workspaceId);
+    assert(profile.id === "pos-standard" && profile.version === "1.0.0", "POS provisioning profile mismatch");
+    assert(profile.allowedModuleIds.includes("commerce"), "POS profile must allow Commerce");
+    assert(profile.defaultModuleIds.includes("commerce"), "POS profile must declare Commerce as a default module");
     const compatibility = await service.checkCompatibility(ownerId, workspaceId, "commerce");
     assert(compatibility.compatible, "Owner compatibility check failed: " + compatibility.issues.join("; "));
-    console.log("PASS Owner can inspect compatible Commerce manifest");
+    assert(compatibility.profileId === "pos-standard" && compatibility.profileVersion === "1.0.0", "Compatibility must report persisted Profile identity/version");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { provisioningProfileVersion: "0.9.0" } });
+    const staleProfile = await service.checkCompatibility(ownerId, workspaceId, "commerce");
+    assert(!staleProfile.compatible && staleProfile.profileId === null, "Stale persisted Profile version must fail closed");
+    await expectConflict(service.getProvisioningProfile(ownerId, workspaceId), "Stale persisted Profile version");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { provisioningProfileVersion: "1.0.0" } });
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { provisioningProfileId: "online-standard" } });
+    const mismatchedProfile = await service.checkCompatibility(ownerId, workspaceId, "commerce");
+    assert(!mismatchedProfile.compatible && mismatchedProfile.profileId === null, "Type-mismatched persisted Profile must fail closed");
+    await expectConflict(service.getProvisioningProfile(ownerId, workspaceId), "Type-mismatched persisted Profile");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { provisioningProfileId: "pos-standard" } });
+    console.log("PASS POS profile resolves and allows Commerce");
+
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: "ONLINE", provisioningProfileId: "online-standard", provisioningProfileVersion: "1.0.0" } });
+    const onlineProfile = await service.getProvisioningProfile(ownerId, workspaceId);
+    assert(onlineProfile.id === "online-standard" && !onlineProfile.allowedModuleIds.includes("commerce"), "Online profile allowlist mismatch");
+    const onlineCompatibility = await service.checkCompatibility(ownerId, workspaceId, "commerce");
+    assert(!onlineCompatibility.compatible && onlineCompatibility.issues.some((issue) => issue.includes("ไม่อนุญาต")), "ONLINE must reject POS Commerce");
+    await expectBadRequest(service.install(managerId, workspaceId, "commerce"), "ONLINE Commerce install");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: null, provisioningProfileId: null, provisioningProfileVersion: null } });
+    const legacyCompatibility = await service.checkCompatibility(ownerId, workspaceId, "commerce");
+    assert(!legacyCompatibility.compatible && legacyCompatibility.issues.some((issue) => issue.includes("ไม่มี Provisioning Profile")), "Untyped Workspace must fail compatibility");
+    await expectConflict(service.getProvisioningProfile(ownerId, workspaceId), "Untyped Workspace profile");
+    await expectBadRequest(service.install(managerId, workspaceId, "commerce"), "Untyped Workspace Commerce install");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: "POS", provisioningProfileId: "pos-standard", provisioningProfileVersion: "1.0.0" } });
+    console.log("PASS ONLINE profile denies POS Commerce; untyped legacy Workspace fails closed");
 
     await expectForbidden(service.list(deniedId, workspaceId), "Member without modules.manage");
     await expectForbidden(service.install(randomUUID(), workspaceId, "commerce"), "Non-member");
@@ -160,10 +201,15 @@ async function main() {
     assert(installed.status === "INSTALLED" && !installed.enabled, "Manager install state invalid");
     const duplicateInstall = await service.install(managerId, workspaceId, "commerce");
     assert(duplicateInstall.id === installed.id, "Install is not idempotent");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: "ONLINE", provisioningProfileId: "online-standard", provisioningProfileVersion: "1.0.0" } });
+    await expectBadRequest(service.enable(managerId, workspaceId, "commerce"), "ONLINE Commerce enable");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: "POS", provisioningProfileId: "pos-standard", provisioningProfileVersion: "1.0.0" } });
     const enabled = await service.enable(managerId, workspaceId, "commerce");
     assert(enabled.status === "ENABLED" && enabled.enabled, "Manager enable failed");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: "ONLINE", provisioningProfileId: "online-standard", provisioningProfileVersion: "1.0.0" } });
     const disabled = await service.disable(managerId, workspaceId, "commerce");
-    assert(disabled.status === "DISABLED" && !disabled.enabled, "Manager disable failed");
+    assert(disabled.status === "DISABLED" && !disabled.enabled, "Disable must remain available for incompatible-module cleanup");
+    await prisma.workspace.update({ where: { id: workspaceId }, data: { type: "POS", provisioningProfileId: "pos-standard", provisioningProfileVersion: "1.0.0" } });
     const audit = await service.auditLog(ownerId, workspaceId);
     assert(audit.map((event) => event.action).sort().join(",") === "MODULE_DISABLED,MODULE_ENABLED,MODULE_INSTALLED",
       "Expected all three lifecycle audit events");

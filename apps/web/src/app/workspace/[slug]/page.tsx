@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 type Role = { id: string; key: string; name: string; isSystem: boolean; permissions: { key: string; description: string | null }[] };
 type Member = { id: string; isOwner: boolean; user: { id: string; email: string; displayName: string; status: string }; roles: { key: string; name: string }[] };
-type Workspace = { id: string; slug: string; name: string; status: string; isOwner: boolean };
+type Workspace = { id: string; slug: string; name: string; type?: "POS" | "ONLINE" | null; status: string; isOwner: boolean };
 const roleLabels: Record<string,string> = { admin:"ผู้ดูแลระบบ", member:"สมาชิก", viewer:"ผู้ดูอย่างเดียว" };
 
 export default function WorkspaceHomePage() {
@@ -37,6 +37,8 @@ export default function WorkspaceHomePage() {
     const list = await api("/api/workspaces") as Workspace[];
     const current = list.find(item=>item.slug===slug);
     if (!current) { router.replace("/workspaces"); return; }
+    if (current.status === "ACTIVE" && current.type === "POS") { router.replace("/workspace/" + current.slug + "/pos"); return; }
+    if (current.status === "ACTIVE" && current.type === "ONLINE") { router.replace("/workspace/" + current.slug + "/online"); return; }
     setWorkspace(current);
     const [memberRows, roleRows] = await Promise.all([
       api(`/api/workspaces/${current.id}/members`) as Promise<Member[]>,
@@ -74,7 +76,7 @@ export default function WorkspaceHomePage() {
   async function logout(){await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin"});router.replace("/");router.refresh()}
 
   return <main className="workspace-shell">
-    <header className="topbar"><button className="brand brand-button" onClick={()=>router.push("/workspaces")}><span className="brand-mark">S</span> SyncUp</button><div className="user-menu"><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/modules`)}>จัดการ Modules</button><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/stores`)}>จัดการ Store</button><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/inventory`)}>คลังสินค้า</button><button className="ghost" onClick={()=>router.push(`/workspace/${slug}/products`)}>สินค้า</button><button className="ghost" onClick={()=>router.push("/workspaces")}>Workspace ทั้งหมด</button><button className="ghost" onClick={logout}>ออกจากระบบ</button></div></header>
+    <header className="topbar"><button className="brand brand-button" onClick={()=>router.push("/workspaces")}><span className="brand-mark">S</span> SyncUp</button><div className="user-menu"><button className="ghost" onClick={()=>router.push("/workspaces")}>Workspace ทั้งหมด</button><button className="ghost" onClick={logout}>ออกจากระบบ</button></div></header>
     <section className="dashboard-content">
       <div className="dashboard-head"><div><div className="eyebrow">WORKSPACE DASHBOARD</div><h1>{workspace?.name??"กำลังโหลด..."}</h1><p className="subtle">{workspace?"/"+workspace.slug:"จัดการทีมและสิทธิ์การเข้าถึงในพื้นที่ทำงานนี้"}</p></div><span className="status">{workspace?.status??"LOADING"}</span></div>
       {error&&<div className="error" role="alert">{error}</div>}{notice&&<div className="success" role="status">{notice}</div>}

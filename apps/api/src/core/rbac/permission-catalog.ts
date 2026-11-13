@@ -1,44 +1,70 @@
-/**
- * Workspace permission catalog and default role matrix.
- *
- * Platform administration is intentionally excluded: platform-admin access is
- * controlled by User.isPlatformAdmin and PlatformAdminGuard, never by these roles.
- */
-export const WORKSPACE_PERMISSIONS = [
-  { key: "workspace.view", description: "ดูข้อมูล Workspace" },
-  { key: "workspace.manage", description: "จัดการการตั้งค่า Workspace" },
-  { key: "members.view", description: "ดูรายชื่อสมาชิก" },
-  { key: "members.manage", description: "จัดการสมาชิก Workspace" },
-  { key: "roles.manage", description: "กำหนดสิทธิ์บทบาท Workspace" },
-  { key: "modules.manage", description: "จัดการโมดูล Workspace" },
-  { key: "commerce.store.view", description: "ดู Store และสาขา" },
-  { key: "commerce.store.manage", description: "จัดการ Store และสาขา" },
-  { key: "commerce.warehouse.view", description: "ดูคลังสินค้า" },
-  { key: "commerce.warehouse.manage", description: "จัดการคลังสินค้า" },
-  { key: "commerce.product.view", description: "ดูสินค้าและแคตตาล็อก" },
-  { key: "commerce.product.create", description: "สร้างสินค้า" },
-  { key: "commerce.product.update", description: "แก้ไขสินค้า" },
-  { key: "commerce.product.archive", description: "เก็บสินค้าเข้าคลัง/ยกเลิกการขาย" },
-  { key: "commerce.pricing.manage", description: "จัดการราคาและส่วนลดสินค้า" },
-  { key: "commerce.inventory.view", description: "ดูยอดคงเหลือสินค้า" },
-  { key: "commerce.inventory.reservation.manage", description: "สร้างและจัดการการจองสต็อก" },
-  { key: "commerce.inventory.receive", description: "รับสินค้าเข้าคลัง" },
-  { key: "commerce.inventory.issue", description: "เบิกหรือตัดสินค้าออกจากคลัง" },
-  { key: "commerce.inventory.movement.reverse", description: "ย้อนรายการเคลื่อนไหวสต็อก" },
-  { key: "commerce.inventory.adjust", description: "ปรับยอดสต็อก" },
-  { key: "commerce.inventory.transfer", description: "โอนย้ายสินค้าระหว่างคลัง" },
-  { key: "commerce.inventory.stocktake", description: "ตรวจนับสต็อก" },
-  { key: "commerce.sales.view", description: "ดูรายการขาย" },
-  { key: "commerce.sales.create", description: "สร้างรายการขาย/POS" },
-  { key: "commerce.sales.discount", description: "ให้ส่วนลดในการขาย" },
-  { key: "commerce.sales.void", description: "ยกเลิกรายการขาย/คืนสินค้า" },
-  { key: "commerce.orders.view", description: "ดูคำสั่งซื้อ" },
-  { key: "commerce.orders.manage", description: "จัดการคำสั่งซื้อ" },
-  { key: "commerce.reports.view", description: "ดูรายงานการขายและสต็อก" }
-] as const;
+import type { WorkspaceType } from "../modules/module-manifest";
 
-const ALL_PERMISSION_KEYS = WORKSPACE_PERMISSIONS.map(({ key }) => key);
-const MANAGER_PERMISSION_KEYS = [
+export interface WorkspacePermissionDefinition {
+  key: string;
+  description: string;
+  owner: "core" | "commerce";
+  workspaceTypes: readonly WorkspaceType[];
+  moduleId?: string;
+}
+
+const BOTH_TYPES: readonly WorkspaceType[] = ["POS", "ONLINE"];
+const POS_ONLY: readonly WorkspaceType[] = ["POS"];
+
+const CORE_PERMISSIONS: readonly WorkspacePermissionDefinition[] = [
+  { key: "workspace.view", description: "ดูข้อมูล Workspace", owner: "core", workspaceTypes: BOTH_TYPES },
+  { key: "workspace.manage", description: "จัดการการตั้งค่า Workspace", owner: "core", workspaceTypes: BOTH_TYPES },
+  { key: "members.view", description: "ดูรายชื่อสมาชิก", owner: "core", workspaceTypes: BOTH_TYPES },
+  { key: "members.manage", description: "จัดการสมาชิก Workspace", owner: "core", workspaceTypes: BOTH_TYPES },
+  { key: "roles.manage", description: "กำหนดสิทธิ์บทบาท Workspace", owner: "core", workspaceTypes: BOTH_TYPES },
+  { key: "modules.manage", description: "จัดการโมดูล Workspace", owner: "core", workspaceTypes: BOTH_TYPES },
+];
+
+const COMMERCE_PERMISSIONS: readonly WorkspacePermissionDefinition[] = [
+  ["commerce.store.view", "ดู Store และสาขา"],
+  ["commerce.store.manage", "จัดการ Store และสาขา"],
+  ["commerce.warehouse.view", "ดูคลังสินค้า"],
+  ["commerce.warehouse.manage", "จัดการคลังสินค้า"],
+  ["commerce.product.view", "ดูสินค้าและแคตตาล็อก"],
+  ["commerce.product.create", "สร้างสินค้า"],
+  ["commerce.product.update", "แก้ไขสินค้า"],
+  ["commerce.product.archive", "เก็บสินค้าเข้าคลัง/ยกเลิกการขาย"],
+  ["commerce.pricing.manage", "จัดการราคาและส่วนลดสินค้า"],
+  ["commerce.inventory.view", "ดูยอดคงเหลือสินค้า"],
+  ["commerce.inventory.reservation.manage", "สร้างและจัดการการจองสต็อก"],
+  ["commerce.inventory.receive", "รับสินค้าเข้าคลัง"],
+  ["commerce.inventory.issue", "เบิกหรือตัดสินค้าออกจากคลัง"],
+  ["commerce.inventory.movement.reverse", "ย้อนรายการเคลื่อนไหวสต็อก"],
+  ["commerce.inventory.adjust", "ปรับยอดสต็อก"],
+  ["commerce.inventory.transfer", "โอนย้ายสินค้าระหว่างคลัง"],
+  ["commerce.inventory.stocktake", "ตรวจนับสต็อก"],
+  ["commerce.sales.view", "ดูรายการขาย"],
+  ["commerce.sales.create", "สร้างรายการขาย/POS"],
+  ["commerce.sales.discount", "ให้ส่วนลดในการขาย"],
+  ["commerce.sales.void", "ยกเลิกรายการขาย/คืนสินค้า"],
+  ["commerce.orders.view", "ดูคำสั่งซื้อ"],
+  ["commerce.orders.manage", "จัดการคำสั่งซื้อ"],
+  ["commerce.reports.view", "ดูรายงานการขายและสต็อก"],
+].map(([key, description]) => ({
+  key,
+  description,
+  owner: "commerce",
+  workspaceTypes: POS_ONLY,
+  moduleId: "commerce",
+}));
+
+export const WORKSPACE_PERMISSION_CATALOG: readonly WorkspacePermissionDefinition[] = [
+  ...CORE_PERMISSIONS,
+  ...COMMERCE_PERMISSIONS,
+];
+
+// Kept as a compatibility export for provisioning and existing consumers.
+export const WORKSPACE_PERMISSIONS = WORKSPACE_PERMISSION_CATALOG.map(({ key, description }) => ({ key, description }));
+
+const POS_ALL = WORKSPACE_PERMISSION_CATALOG.filter((permission) => permission.workspaceTypes.includes("POS")).map(({ key }) => key);
+const ONLINE_CORE = CORE_PERMISSIONS.map(({ key }) => key);
+
+const POS_MANAGER = [
   "workspace.view", "members.view", "modules.manage",
   "commerce.store.view", "commerce.store.manage",
   "commerce.warehouse.view", "commerce.warehouse.manage",
@@ -48,26 +74,58 @@ const MANAGER_PERMISSION_KEYS = [
   "commerce.inventory.issue", "commerce.inventory.movement.reverse",
   "commerce.inventory.adjust", "commerce.inventory.transfer", "commerce.inventory.stocktake",
   "commerce.sales.view", "commerce.sales.create", "commerce.sales.discount", "commerce.sales.void",
-  "commerce.orders.view", "commerce.orders.manage", "commerce.reports.view"
+  "commerce.orders.view", "commerce.orders.manage", "commerce.reports.view",
 ] as const;
-const CASHIER_PERMISSION_KEYS = [
+const POS_CASHIER = [
   "workspace.view", "commerce.store.view", "commerce.product.view",
   "commerce.inventory.view", "commerce.sales.view", "commerce.sales.create",
-  "commerce.orders.view"
+  "commerce.orders.view",
 ] as const;
-const INVENTORY_PERMISSION_KEYS = [
+const POS_INVENTORY = [
   "workspace.view", "commerce.store.view", "commerce.warehouse.view",
   "commerce.product.view", "commerce.inventory.view", "commerce.inventory.reservation.manage",
   "commerce.inventory.receive", "commerce.inventory.issue", "commerce.inventory.adjust",
   "commerce.inventory.transfer", "commerce.inventory.stocktake",
-  "commerce.orders.view", "commerce.reports.view"
+  "commerce.orders.view", "commerce.reports.view",
 ] as const;
 
-export const DEFAULT_WORKSPACE_ROLES = [
-  { key: "admin", name: "ผู้ดูแลระบบ", permissions: ALL_PERMISSION_KEYS },
-  { key: "manager", name: "ผู้จัดการ", permissions: MANAGER_PERMISSION_KEYS },
-  { key: "cashier", name: "พนักงานขาย", permissions: CASHIER_PERMISSION_KEYS },
-  { key: "inventory_staff", name: "พนักงานคลังสินค้า", permissions: INVENTORY_PERMISSION_KEYS },
+export interface WorkspaceRoleDefinition {
+  key: string;
+  name: string;
+  permissions: readonly string[];
+}
+
+const POS_ROLES: readonly WorkspaceRoleDefinition[] = [
+  { key: "admin", name: "ผู้ดูแลระบบ", permissions: POS_ALL },
+  { key: "manager", name: "ผู้จัดการ", permissions: POS_MANAGER },
+  { key: "cashier", name: "พนักงานขาย", permissions: POS_CASHIER },
+  { key: "inventory_staff", name: "พนักงานคลังสินค้า", permissions: POS_INVENTORY },
   { key: "member", name: "สมาชิก", permissions: ["workspace.view", "members.view"] },
-  { key: "viewer", name: "ผู้ดูอย่างเดียว", permissions: ["workspace.view", "members.view"] }
-] as const;
+  { key: "viewer", name: "ผู้ดูอย่างเดียว", permissions: ["workspace.view", "members.view"] },
+];
+
+const ONLINE_ROLES: readonly WorkspaceRoleDefinition[] = [
+  { key: "admin", name: "ผู้ดูแลระบบ", permissions: ONLINE_CORE },
+  { key: "manager", name: "ผู้จัดการ", permissions: ["workspace.view", "members.view", "members.manage", "modules.manage"] },
+  { key: "member", name: "สมาชิก", permissions: ["workspace.view", "members.view"] },
+  { key: "viewer", name: "ผู้ดูอย่างเดียว", permissions: ["workspace.view"] },
+];
+
+export function getWorkspaceRoleDefinitions(type: WorkspaceType): readonly WorkspaceRoleDefinition[] {
+  return type === "POS" ? POS_ROLES : ONLINE_ROLES;
+}
+
+export function getWorkspacePermissionDefinitions(
+  type: WorkspaceType,
+  allowedModuleIds: readonly string[],
+  enabledModuleIds: readonly string[] = allowedModuleIds,
+): readonly WorkspacePermissionDefinition[] {
+  return WORKSPACE_PERMISSION_CATALOG.filter((permission) =>
+    permission.workspaceTypes.includes(type)
+    && (!permission.moduleId || (allowedModuleIds.includes(permission.moduleId) && enabledModuleIds.includes(permission.moduleId))),
+  );
+}
+
+export function getWorkspaceRoleDefinition(type: WorkspaceType, roleKey: string): WorkspaceRoleDefinition | undefined {
+  return getWorkspaceRoleDefinitions(type).find((role) => role.key === roleKey);
+}

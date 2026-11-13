@@ -11,6 +11,7 @@ coverage
 .DS_Store
 *.tsbuildinfo
 apps/api/data/
+.data/
 apps/api/generated/
 apps/web/playwright-report/
 apps/web/test-results/

@@ -9,14 +9,14 @@ export type CreateProductInput = {
   name?: string;
   description?: string | null;
   status?: string;
-  variant?: { sku?: string; title?: string; barcode?: string | null; uomCode?: string };
+  variant?: { sku?: string; title?: string; barcode?: string | null; uomCode?: string; taxCategoryId?: string | null };
 };
 
 export type UpdateProductInput = {
   name?: string;
   description?: string | null;
   status?: string;
-  variant?: { id?: string; sku?: string; title?: string; barcode?: string | null };
+  variant?: { id?: string; sku?: string; title?: string; barcode?: string | null; taxCategoryId?: string | null };
 };
 
 type VariantRow = {
@@ -25,6 +25,7 @@ type VariantRow = {
   title: string;
   barcode: string | null;
   status: string;
+  taxCategoryId: string | null;
 };
 
 @Injectable()
@@ -44,31 +45,45 @@ export class ProductCommandService {
     const title = this.title(variant.title, name);
     const barcode = this.barcode(variant.barcode);
     const uomCode = this.requiredCode(variant.uomCode, "หน่วยนับ");
+    const taxCategoryId = variant.taxCategoryId ? this.uuid(variant.taxCategoryId, "variant.taxCategoryId") : null;
     const db = await this.databases.forMembership(userId, workspaceId);
     const productId = await this.write(db, async (tx) => {
       const uom = await this.activeUom(tx, uomCode);
+      await this.activeTaxCategory(tx, taxCategoryId);
       const inserted = await tx.$queryRaw<Array<{ id: string }>>`
         INSERT INTO products (id, name, description, status, normalized_name, updated_at)
         VALUES (gen_random_uuid(), ${name}, ${description}, ${status}::"ProductStatus", ${name.toLowerCase()}, NOW())
         RETURNING id
       `;
       const id = inserted[0].id;
-      const variantRows = await tx.$queryRaw<Array<{ id: string }>>`
-        INSERT INTO product_variants
-          (id, product_id, base_uom_id, sku, normalized_sku, title, barcode, status, updated_at)
-        VALUES (
-          gen_random_uuid(), ${id}::uuid, ${uom.id}::uuid, ${sku.value}, ${sku.normalized},
-          ${title}, ${barcode?.value ?? null}, ${status}::"ProductStatus", NOW()
-        )
-        RETURNING id
-      `;
+      const hasTaxCategoryColumn = await this.hasTaxCategoryColumn(tx);
+      if (taxCategoryId && !hasTaxCategoryColumn) throw new ConflictException("Tax Category assignment requires the Sales Orders tenant migration");
+      const variantRows = hasTaxCategoryColumn
+        ? await tx.$queryRaw<Array<{ id: string }>>`
+            INSERT INTO product_variants
+              (id, product_id, base_uom_id, tax_category_id, sku, normalized_sku, title, barcode, status, updated_at)
+            VALUES (
+              gen_random_uuid(), ${id}::uuid, ${uom.id}::uuid, ${taxCategoryId}::uuid, ${sku.value}, ${sku.normalized},
+              ${title}, ${barcode?.value ?? null}, ${status}::"ProductStatus", NOW()
+            )
+            RETURNING id
+          `
+        : await tx.$queryRaw<Array<{ id: string }>>`
+            INSERT INTO product_variants
+              (id, product_id, base_uom_id, sku, normalized_sku, title, barcode, status, updated_at)
+            VALUES (
+              gen_random_uuid(), ${id}::uuid, ${uom.id}::uuid, ${sku.value}, ${sku.normalized},
+              ${title}, ${barcode?.value ?? null}, ${status}::"ProductStatus", NOW()
+            )
+            RETURNING id
+          `;
       const variantId = variantRows[0].id;
       await tx.$executeRaw`
         INSERT INTO variant_uoms (id, variant_id, uom_id, usage, conversion_to_base, status, updated_at)
         VALUES (gen_random_uuid(), ${variantId}::uuid, ${uom.id}::uuid, 'BASE', 1, 'ACTIVE', NOW())
       `;
       if (barcode) await this.insertBarcode(tx, variantId, barcode);
-      await this.audit(tx, userId, "PRODUCT_CREATED", id, null, { name, description, status, sku: sku.value, barcode: barcode?.value ?? null, uomCode: uom.code });
+      await this.audit(tx, userId, "PRODUCT_CREATED", id, null, { name, description, status, sku: sku.value, barcode: barcode?.value ?? null, uomCode: uom.code, taxCategoryId });
       return id;
     });
     return this.queries.getProduct(userId, workspaceId, productId);
@@ -85,23 +100,39 @@ export class ProductCommandService {
     const sku = this.sku(variant.sku);
     const title = this.title(variant.title, name);
     const barcode = this.barcode(variant.barcode);
+    const taxCategoryId = variant.taxCategoryId === undefined
+      ? undefined
+      : (variant.taxCategoryId ? this.uuid(variant.taxCategoryId, "variant.taxCategoryId") : null);
     const db = await this.databases.forMembership(userId, workspaceId);
     await this.write(db, async (tx) => {
       const before = await this.lockProduct(tx, id);
       if (before.status === "ARCHIVED") throw new ConflictException("สินค้าที่เก็บถาวรแล้วแก้ไขไม่ได้");
       const previous = await this.lockVariant(tx, id, variantId);
+      await this.activeTaxCategory(tx, taxCategoryId === undefined ? previous.taxCategoryId : taxCategoryId);
       await tx.$executeRaw`
         UPDATE products
         SET name = ${name}, description = ${description}, status = ${status}::"ProductStatus",
           normalized_name = ${name.toLowerCase()}, updated_at = NOW()
         WHERE id = ${id}::uuid
       `;
-      await tx.$executeRaw`
-        UPDATE product_variants
-        SET sku = ${sku.value}, normalized_sku = ${sku.normalized}, title = ${title},
-          barcode = ${barcode?.value ?? null}, status = ${status}::"ProductStatus", updated_at = NOW()
-        WHERE id = ${variantId}::uuid AND product_id = ${id}::uuid
-      `;
+      const hasTaxCategoryColumn = await this.hasTaxCategoryColumn(tx);
+      if (taxCategoryId && !hasTaxCategoryColumn) throw new ConflictException("Tax Category assignment requires the Sales Orders tenant migration");
+      if (hasTaxCategoryColumn) {
+        await tx.$executeRaw`
+          UPDATE product_variants
+          SET sku = ${sku.value}, normalized_sku = ${sku.normalized}, title = ${title},
+            barcode = ${barcode?.value ?? null}, tax_category_id = ${taxCategoryId === undefined ? previous.taxCategoryId : taxCategoryId}::uuid,
+            status = ${status}::"ProductStatus", updated_at = NOW()
+          WHERE id = ${variantId}::uuid AND product_id = ${id}::uuid
+        `;
+      } else {
+        await tx.$executeRaw`
+          UPDATE product_variants
+          SET sku = ${sku.value}, normalized_sku = ${sku.normalized}, title = ${title},
+            barcode = ${barcode?.value ?? null}, status = ${status}::"ProductStatus", updated_at = NOW()
+          WHERE id = ${variantId}::uuid AND product_id = ${id}::uuid
+        `;
+      }
       if (previous.barcode && previous.barcode.trim().toLowerCase() !== (barcode?.normalized ?? "")) {
         await tx.$executeRaw`
           DELETE FROM variant_barcodes
@@ -133,8 +164,8 @@ export class ProductCommandService {
       }
       await this.audit(tx, userId, "PRODUCT_UPDATED", id, {
         name: before.name, description: before.description, status: before.status,
-        sku: previous.sku, title: previous.title, barcode: previous.barcode,
-      }, { name, description, status, sku: sku.value, title, barcode: barcode?.value ?? null });
+        sku: previous.sku, title: previous.title, barcode: previous.barcode, taxCategoryId: previous.taxCategoryId,
+      }, { name, description, status, sku: sku.value, title, barcode: barcode?.value ?? null, taxCategoryId: taxCategoryId === undefined ? previous.taxCategoryId : taxCategoryId });
       return id;
     });
     return this.queries.getProduct(userId, workspaceId, id);
@@ -181,6 +212,15 @@ export class ProductCommandService {
     }
   }
 
+  private async activeTaxCategory(tx: PrismaClient, id: string | null | undefined) {
+    if (!id) return;
+    const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+      SELECT id, status::text AS status FROM tax_categories WHERE id = ${id}::uuid FOR SHARE
+    `;
+    if (!rows.length) throw new NotFoundException("ไม่พบ Tax Category ที่ระบุ");
+    if (rows[0].status !== "ACTIVE") throw new ConflictException("Tax Category นี้ไม่พร้อมใช้งาน");
+  }
+
   private async activeUom(tx: PrismaClient, code: string) {
     const rows = await tx.$queryRaw<Array<{ id: string; code: string; status: string }>>`
       SELECT id, code, status::text AS status
@@ -203,13 +243,31 @@ export class ProductCommandService {
     return rows[0];
   }
 
-  private async lockVariant(tx: PrismaClient, productId: string, variantId: string): Promise<VariantRow> {
-    const rows = await tx.$queryRaw<VariantRow[]>`
-      SELECT id, sku, title, barcode, status::text AS status
-      FROM product_variants
-      WHERE id = ${variantId}::uuid AND product_id = ${productId}::uuid
-      FOR UPDATE
+  private async hasTaxCategoryColumn(tx: PrismaClient): Promise<boolean> {
+    const rows = await tx.$queryRaw<Array<{ available: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'product_variants' AND column_name = 'tax_category_id'
+      ) AS available
     `;
+    return rows[0]?.available ?? false;
+  }
+
+  private async lockVariant(tx: PrismaClient, productId: string, variantId: string): Promise<VariantRow> {
+    const hasTaxCategoryColumn = await this.hasTaxCategoryColumn(tx);
+    const rows = hasTaxCategoryColumn
+      ? await tx.$queryRaw<VariantRow[]>`
+          SELECT id, sku, title, barcode, status::text AS status, tax_category_id::text AS "taxCategoryId"
+          FROM product_variants
+          WHERE id = ${variantId}::uuid AND product_id = ${productId}::uuid
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<VariantRow[]>`
+          SELECT id, sku, title, barcode, status::text AS status, NULL::text AS "taxCategoryId"
+          FROM product_variants
+          WHERE id = ${variantId}::uuid AND product_id = ${productId}::uuid
+          FOR UPDATE
+        `;
     if (!rows.length) throw new NotFoundException("ไม่พบ Variant ของสินค้านี้");
     return rows[0];
   }

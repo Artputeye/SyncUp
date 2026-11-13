@@ -23,9 +23,14 @@
     "test:tenant-lifecycle-http": "npm run build && node --env-file=.env scripts/verify-tenant-lifecycle-http.cjs",
     "test:tenant-lifecycle-service": "npm run build && node scripts/verify-tenant-lifecycle-service.cjs",
     "test:stock-reservation-concurrency": "npm run build && node --env-file=.env scripts/verify-stock-reservation-concurrency.cjs",
+    "test:sales-orders": "npm run build && node --env-file=.env scripts/verify-sales-orders-service-e2e.cjs",
+    "test:sales-orders-http": "npm run build && node --env-file=.env scripts/verify-sales-orders-http-rbac-e2e.cjs",
+    "rehearse:sales-migrations": "node --env-file=.env scripts/rehearse-pos-local-sales-migrations.cjs",
+    "activate:pos-local-sales": "node --env-file=.env scripts/activate-pos-local-sales-migrations.cjs",
     "test:inventory-permissions": "node --env-file=.env scripts/verify-inventory-permission-migration.cjs",
     "test:product-barcode-preservation": "npm run build && node scripts/verify-product-barcode-preservation.cjs",
     "test:workspace-bootstrap": "npm run build && node scripts/verify-workspace-bootstrap.cjs",
+    "rehearse:workspace-type-migration": "node --env-file=.env scripts/rehearse-workspace-type-migration.cjs",
     "test:store-branch-warehouse-workflow": "npm run build && node --env-file=.env scripts/verify-store-branch-warehouse-workflow.cjs",
     "prepare:e2e-commerce-workspace": "node --env-file=.env scripts/prepare-e2e-commerce-workspace.cjs",
     "test:e2e-inventory-rbac-http": "node --env-file=.env scripts/verify-e2e-inventory-rbac-http.cjs",
@@ -33,7 +38,16 @@
     "test:e2e-module-lifecycle": "node --env-file=.env scripts/verify-e2e-module-lifecycle-http.cjs",
     "apply:module-audit-runtime-grants": "node --env-file=.env scripts/grant-module-audit-runtime-access.cjs",
     "test:product-postgres-integration": "npm run build && node --env-file=.env scripts/verify-product-postgres-integration.cjs",
-    "prisma:generate:tenant": "prisma generate --schema prisma/tenant/schema.prisma"
+    "prisma:generate:tenant": "prisma generate --schema prisma/tenant/schema.prisma",
+    "rehearse:workspace-profile-lifecycle": "node --env-file=.env scripts/rehearse-workspace-profile-lifecycle.cjs",
+    "test:workspace-type-rbac": "npm run build && node scripts/verify-workspace-type-rbac.cjs",
+    "test:workspace-type-rbac-integration": "npm run build && node --env-file=.env scripts/verify-workspace-type-rbac-integration.cjs",
+    "test:workspace-database-registry": "npm run build && node scripts/verify-workspace-database-registry.cjs",
+    "test:rbac-guard-workspace-scope": "npm run build && node --test scripts/verify-rbac-guard-workspace-scope.cjs",
+    "test:workspace-media-paths": "npm run build && node scripts/verify-workspace-media-paths.cjs",
+    "test:workspace-database-registry-integration": "npm run build && node --env-file=.env scripts/verify-workspace-database-registry-integration.cjs",
+    "test:image-import-workspace-isolation": "npm run build && node scripts/verify-image-import-workspace-isolation.cjs",
+    "test:workspace-media-image-import-http-isolation": "npm run build && node --env-file=.env scripts/verify-workspace-media-image-import-http-isolation.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.0",
@@ -41,17 +55,22 @@
     "@nestjs/platform-express": "^11.1.0",
     "@prisma/client": "6.16.2",
     "bcryptjs": "^3.0.2",
+    "multer": "^2.5.0",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "sharp": "^0.35.5",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.1.0",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.3.0",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.15.5",
+    "@types/yauzl": "^3.4.0",
     "prisma": "6.16.2",
     "typescript": "^5.9.2"
   }

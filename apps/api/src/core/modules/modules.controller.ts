@@ -15,6 +15,11 @@ export class ModulesController {
     return this.modules.list(request.user.userId, workspaceId);
   }
 
+  @Get("profile")
+  profile(@Param("workspaceId") workspaceId: string, @Req() request: AuthenticatedRequest) {
+    return this.modules.getProvisioningProfile(request.user.userId, workspaceId);
+  }
+
   @Get("audit")
   auditLog(@Param("workspaceId") workspaceId: string, @Req() request: AuthenticatedRequest) {
     return this.modules.auditLog(request.user.userId, workspaceId);
