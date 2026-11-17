@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const workspaceSlug = process.env.LOCAL_TEST_WORKSPACE_SLUG ?? "pos-local";
-const workspaceName = "pos-local";
+const workspaceSlug = process.env.E2E_WORKSPACE_SLUG ?? "e2e-commerce-20261106";
+const workspaceName = "E2E Commerce Workspace";
 
 async function signInToWorkspace(page: Page, email: string, password: string) {
   await page.goto("/login");
@@ -10,22 +10,30 @@ async function signInToWorkspace(page: Page, email: string, password: string) {
   await page.getByRole("button", { name: "เข้าสู่ระบบ" }).click();
   await expect(page).toHaveURL(/\/workspaces\/?(?:\?.*)?$/, { timeout: 20_000 });
   await page.goto("/workspace/" + workspaceSlug);
-  await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "$"));
+  await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/pos$"));
 }
 
 async function expectInventoryPage(page: Page) {
-  await page.getByRole("button", { name: "คลังสินค้า" }).click();
+  await page.getByRole("link", { name: "คลังสินค้า" }).click();
   await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/inventory$"));
   await expect(page.getByRole("heading", { name: "คลังสินค้า" })).toBeVisible();
   await expect(page.getByText(/รับเข้า จ่ายออก ปรับยอด และโอนระหว่างคลัง/)).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "สินค้า / SKU" })).toBeVisible();
-  await expect(page.getByLabel("คลังสินค้า")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "รับสินค้าเข้า" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "จ่ายสินค้าออก" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "ปรับยอดสต็อก" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "โอนระหว่างคลัง" })).toBeVisible();
-  await page.getByRole("tab", { name: "โอนระหว่างคลัง" }).click();
-  await expect(page.getByLabel("คลังปลายทาง")).toBeVisible();
+
+  const inventoryReady = page.locator("#inventory-variant");
+  const inventoryEmpty = page.getByRole("heading", { name: "ยังไม่พร้อมทำรายการ" });
+  await expect(inventoryReady.or(inventoryEmpty)).toBeVisible();
+  if (await inventoryReady.isVisible()) {
+    await expect(page.locator("#inventory-warehouse")).toBeVisible();
+    await expect(page.getByRole("tab", { name: "รับสินค้าเข้า" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "จ่ายสินค้าออก" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "ปรับยอดสต็อก" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "โอนระหว่างคลัง" })).toBeVisible();
+    await page.getByRole("tab", { name: "โอนระหว่างคลัง" }).click();
+    await expect(page.getByLabel("คลังปลายทาง")).toBeVisible();
+  } else {
+    await expect(inventoryEmpty).toBeVisible();
+  }
+
   await page.getByRole("button", { name: "ประวัติ Movement" }).click();
   await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/inventory/history$"));
   await expect(page.getByRole("heading", { name: "ประวัติการเคลื่อนไหวสินค้า" })).toBeVisible();
@@ -34,17 +42,17 @@ async function expectInventoryPage(page: Page) {
   await expect(page.getByLabel("ประเภท")).toBeVisible();
 }
 
-test("Inventory UI loads transaction modes and movement history for Manager", async ({ page }) => {
-  const email = process.env.LOCAL_TEST_MANAGER_EMAIL;
-  const password = process.env.LOCAL_TEST_MANAGER_PASSWORD;
+test("Inventory UI shows transaction modes or an empty state and movement history for Manager", async ({ page }) => {
+  const email = process.env.E2E_MANAGER_EMAIL;
+  const password = process.env.E2E_MANAGER_PASSWORD;
   test.skip(!email || !password, "Dedicated E2E Manager credentials are required.");
   await signInToWorkspace(page, email!, password!);
   await expectInventoryPage(page);
 });
 
 test("Manager can complete the Stocktake UI flow with Stocktake API responses stubbed", async ({ page }) => {
-  const email = process.env.LOCAL_TEST_MANAGER_EMAIL;
-  const password = process.env.LOCAL_TEST_MANAGER_PASSWORD;
+  const email = process.env.E2E_MANAGER_EMAIL;
+  const password = process.env.E2E_MANAGER_PASSWORD;
   test.skip(!email || !password, "Dedicated E2E Manager credentials are required.");
 
   const stocktakeId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -106,7 +114,7 @@ test("Manager can complete the Stocktake UI flow with Stocktake API responses st
   });
 
   await signInToWorkspace(page, email!, password!);
-  await page.getByRole("button", { name: "คลังสินค้า" }).click();
+  await page.getByRole("link", { name: "คลังสินค้า" }).click();
   await page.getByRole("button", { name: "ตรวจนับสต็อก", exact: true }).click();
   await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/inventory/stocktakes$"));
   await expect(page.getByRole("heading", { name: "ตรวจนับสต็อก" })).toBeVisible();

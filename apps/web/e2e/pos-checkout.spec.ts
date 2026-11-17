@@ -25,6 +25,12 @@ async function mockCatalog(page: Page) {
   await page.route("**/api/tenant/*/stores/*/branches/*/warehouses", route => route.fulfill({ json: [
     { id: warehouseId, name: "คลังหลัก", code: "MAIN", status: "ACTIVE", isDefault: true }
   ] }));
+  await page.route("**/api/tenant/*/branches/*/registers", route => route.fulfill({ json: [
+    { id: "99999999-9999-4999-8999-999999999999", code: "REG-01", name: "Register E2E", status: "ACTIVE" }
+  ] }));
+  await page.route("**/api/tenant/*/registers/*/shifts/current", route => route.fulfill({ json: {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab", status: "OPEN", currency: "THB", opening_float: "500.00", expected_cash: "500.00"
+  } }));
   await page.route("**/api/tenant/*/pos/catalog**", route => route.fulfill({ json: {
     context: { storeId, branchId, warehouseId, currency: "THB", taxMode: "VAT", priceTaxMode: "INCLUSIVE", currencyMinorUnits: 2 },
     items: [product]

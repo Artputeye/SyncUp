@@ -12,44 +12,37 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(page.getByRole("heading", { name: "เลือก Workspace" })).toBeVisible();
   await expect(page.getByRole("button", { name: new RegExp(workspaceName) })).toBeVisible();
   await page.getByRole("button", { name: new RegExp(workspaceName) }).click();
-  await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "$"));
+  await expect(page).toHaveURL(new RegExp("/workspace/" + workspaceSlug + "/pos$"));
+}
+
+async function getJson<T>(page: Page, path: string): Promise<T> {
+  return await page.evaluate(async (url) => {
+    const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) throw new Error(`GET ${url} failed with HTTP ${response.status}`);
+    return response.json();
+  }, path) as T;
 }
 
 async function openCommerceHierarchy(page: Page) {
-  const storeResponsePromise = page.waitForResponse(response =>
-    response.url().includes("/api/tenant/") &&
-    response.url().endsWith("/stores") &&
-    response.request().method() === "GET"
-  );
+  const workspaces = await getJson<Array<{ id: string; slug: string }>>(page, "/api/workspaces");
+  const workspace = workspaces.find((row) => row.slug === workspaceSlug);
+  expect(workspace, "E2E workspace should be available to the signed-in user").toBeTruthy();
+
   await page.goto(`/workspace/${workspaceSlug}/stores`);
   await expect(page.getByRole("heading", { name: "จัดการ Store" })).toBeVisible();
-  const storeResponse = await storeResponsePromise;
-  expect(storeResponse.ok(), "Store list API should return HTTP 2xx").toBeTruthy();
-  const stores = await storeResponse.json() as Array<{ id: string; name: string }>;
+  const stores = await getJson<Array<{ id: string; name: string }>>(page, `/api/tenant/${workspace!.id}/stores`);
   expect(stores.length, "E2E workspace should contain a Store").toBeGreaterThan(0);
   await expect(page.getByRole("button", { name: /E2E Main Store/ })).toBeVisible();
   await page.locator(".store-card-button").first().click();
 
-  const branchResponsePromise = page.waitForResponse(response =>
-    response.url().includes("/api/tenant/") && response.url().includes(`/stores/${stores[0].id}/branches`) &&
-    response.request().method() === "GET"
-  );
   await page.goto(`/workspace/${workspaceSlug}/stores/${stores[0].id}/branches`);
-  const branchResponse = await branchResponsePromise;
-  expect(branchResponse.ok(), "Branch list API should return HTTP 2xx").toBeTruthy();
   await expect(page.getByRole("heading", { name: "จัดการสาขา" })).toBeVisible();
-  const branches = await branchResponse.json() as Array<{ id: string; name: string }>;
+  const branches = await getJson<Array<{ id: string; name: string }>>(page, `/api/tenant/${workspace!.id}/stores/${stores[0].id}/branches`);
   expect(branches.length, "E2E Store should contain a Branch").toBeGreaterThan(0);
 
-  const warehouseResponsePromise = page.waitForResponse(response =>
-    response.url().includes("/api/tenant/") && response.url().includes(`/branches/${branches[0].id}/warehouses`) &&
-    response.request().method() === "GET"
-  );
   await page.goto(`/workspace/${workspaceSlug}/stores/${stores[0].id}/branches/${branches[0].id}/warehouses`);
-  const warehouseResponse = await warehouseResponsePromise;
-  expect(warehouseResponse.ok(), "Warehouse list API should return HTTP 2xx").toBeTruthy();
   await expect(page.getByRole("heading", { name: "คลังสินค้า" })).toBeVisible();
-  const warehouses = await warehouseResponse.json() as Array<{ id: string; name: string }>;
+  const warehouses = await getJson<Array<{ id: string; name: string }>>(page, `/api/tenant/${workspace!.id}/stores/${stores[0].id}/branches/${branches[0].id}/warehouses`);
   expect(warehouses.length, "E2E Branch should contain a Warehouse").toBeGreaterThan(0);
   await expect(page.getByRole("button", { name: /คลังหลัก/ })).toBeVisible();
   await page.locator(".store-card-button").first().click();

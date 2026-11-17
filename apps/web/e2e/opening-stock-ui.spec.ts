@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const workspaceSlug = process.env.LOCAL_TEST_WORKSPACE_SLUG ?? "pos-local";
+const workspaceSlug = process.env.E2E_WORKSPACE_SLUG ?? "e2e-commerce-20261106";
 
 async function signIn(page: Page, email: string, password: string) {
   await page.goto("/login");
@@ -11,9 +11,9 @@ async function signIn(page: Page, email: string, password: string) {
 }
 
 test("Manager can create and post an Opening Stock draft", async ({ page }) => {
-  const email = process.env.LOCAL_TEST_MANAGER_EMAIL;
-  const password = process.env.LOCAL_TEST_MANAGER_PASSWORD;
-  test.skip(!email || !password, "Dedicated pos-local Manager credentials are required.");
+  const email = process.env.E2E_MANAGER_EMAIL;
+  const password = process.env.E2E_MANAGER_PASSWORD;
+  test.skip(!email || !password, "Dedicated E2E Manager credentials are required.");
 
   const workspaceId = "c0130bf3-c1c0-4dfa-a915-7ca5155cacfd";
   const storeId = "33333333-3333-4333-8333-333333333333";

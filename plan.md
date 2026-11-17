@@ -951,3 +951,21 @@ Milestone ถัดไปต้องเริ่มจาก Handoff ล่า�
 6. รายงานสถานะและเสนอ Milestone ถัดไปเพียงหนึ่งรายการ
 
 หากไม่ชัดว่าคำสั่งหมายถึงการแก้ระบบจริงหรือวางแผน ให้ถามเฉพาะประเด็นจำเป็นก่อนการกระทำที่ย้อนกลับยาก
+### 19.11 Browser E2E Verification Handoff — 2026-11-17
+
+**Environment:** E2E workspace `e2e-commerce-20261106` only; no `pos-local` or Production workspace was targeted by the browser tests.
+
+| Verification | Result | Evidence |
+|---|---|---|
+| Targeted regression | PASS | 10 passed, 0 failed, 0 skipped; Run `e2e-20261117T081722Z-53d9de` |
+| Full Browser E2E | PASS with skips | 37 passed, 0 failed, 4 skipped; Run `e2e-20261117T081827Z-27bc09`; exit code 0 |
+| TypeScript | PASS | `pnpm exec tsc --noEmit` |
+| Diff whitespace check | PASS | `git diff --check` |
+
+**E2E changes:** Corrected POS workspace route expectations, preserved the enabled Commerce module state in its test, added mocked Register/Shift prerequisites for checkout, aligned inventory empty-state/navigation assertions with the UI, corrected order return/refund interactions, and moved affected specs to the dedicated E2E workspace credentials rather than `pos-local`.
+
+**Remaining skips (not counted as PASS):** Three tests require `E2E_WORKSPACE_NAME`; Product Catalog Management requires `E2E_STORE_ID` and `E2E_PRODUCT_ID`. These fixtures are not currently configured. Do not point these tests at a live workspace or create/change fixture records until a disposable fixture and its safety boundary are confirmed.
+
+**Acceptance:** Browser E2E has no failing tests in this run, but full acceptance remains **IN PROGRESS** because four tests are skipped and their fixture-dependent workflows are not verified.
+
+**Next:** Prepare isolated disposable workspace/store/product fixtures, verify that the skipped tests cannot mutate shared or Production data, configure the required E2E variables, then run the full suite once (without overlapping runners).

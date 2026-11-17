@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-const slug=process.env.LOCAL_TEST_WORKSPACE_SLUG??"pos-local";
+const slug=process.env.E2E_WORKSPACE_SLUG??"e2e-commerce-20261106";
 async function signIn(page:Page,email:string,password:string){await page.goto("/login");await page.getByLabel("อีเมล").fill(email);await page.locator("#password").fill(password);await page.getByRole("button",{name:"เข้าสู่ระบบ"}).click();await expect(page).toHaveURL(/\/workspaces\/?(?:\?.*)?$/,{timeout:20000})}
 test("Orders UI creates, posts and records a payment",async({page})=>{
- const email=process.env.LOCAL_TEST_MANAGER_EMAIL,password=process.env.LOCAL_TEST_MANAGER_PASSWORD;
- test.skip(!email||!password,"Manager credentials are required.");
+ const email=process.env.E2E_MANAGER_EMAIL,password=process.env.E2E_MANAGER_PASSWORD;
+ test.skip(!email||!password,"Dedicated E2E Manager credentials are required.");
  const wid="c0130bf3-c1c0-4dfa-a915-7ca5155cacfd",sid="33333333-3333-4333-8333-333333333333",bid="44444444-4444-4444-8444-444444444444",hid="55555555-5555-4555-8555-555555555555",vid="22222222-2222-4222-8222-222222222222",oid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
  let orderStatus:"RESERVED"|"POSTED"|"CANCELLED"="RESERVED",createdBody:any=null,payments:any[]=[],returns:any[]=[],refunds:any[]=[];
  const detail=()=>({id:oid,order_number:"SO-E2E-2026-000001",status:orderStatus,currency:"THB",subtotal:"200.0000",tax_amount:"14.0000",total_amount:"214.0000",item_count:1,created_at:new Date().toISOString(),posted_at:orderStatus==="POSTED"?new Date().toISOString():null,tax_mode:"VAT",price_tax_mode:"EXCLUSIVE",store_name:"Store E2E",branch_code:"BKK",branch_name:"สาขาทดสอบ",warehouse_code:"WH",warehouse_name:"คลังทดสอบ",cancelled_at:null,cancel_reason:null,items:[{id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",product_name:"สินค้า E2E",variant_title:"รุ่นทดสอบ",sku:"ORD-UI-001",uom_code:"EA",quantity:"2.000",base_quantity:"2.000",unit_price:"100.0000",tax_amount:"14.0000",total_amount:"214.0000",unit_cost_snapshot:orderStatus==="POSTED"?"40.000000":null,reservation_status:"CONSUMED"}]});
@@ -45,9 +45,11 @@ test("Orders UI creates, posts and records a payment",async({page})=>{
  await expect(page.getByText("ไม่ใช่ใบกำกับภาษี")).toBeVisible();
  await page.getByRole("button",{name:"ปิด"}).click();
  await page.locator(".order-return-lines input").fill("1");
- await page.getByRole("button",{name:"บันทึกรับคืน"}).click();
+ await page.getByRole("button",{name:"ส่งคำขอรับคืน"}).click();
  await expect(page.getByRole("button",{name:/RET-E2E-000001/})).toBeVisible();
+ await page.locator(".order-refund-form select").nth(0).selectOption("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+ await page.locator(".order-refund-form select").nth(1).selectOption("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
  await page.locator(".order-refund-form input[type=number]").fill("50");
- await page.getByRole("button",{name:"บันทึก Refund"}).click();
+ await page.getByRole("button",{name:"ส่งคำขอคืนเงิน"}).click();
  await expect(page.getByText("REF-E2E-000001")).toBeVisible();
 });
